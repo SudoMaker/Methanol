@@ -1,0 +1,29 @@
+# Generated files
+gen/
+build/
+dist/
+
+# Log Files
+*.log
+*.log.*
+
+# Temp Files
+*~
+*.*~
+.fuse_*
+yarn.lock
+cache/
+temp/
+.DS_Store
+
+# node modules
+node_modules/
+
+# local tools
+publish
+/out
+
+# Agent files
+AGENTS.md
+
+add-license-header.cjs

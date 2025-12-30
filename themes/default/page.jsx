@@ -1,0 +1,303 @@
+/* Copyright Yukino Song, SudoMaker Ltd.
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * 	http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
+
+import { HTMLRenderer as R } from 'methanol'
+import { renderToc } from './components/ThemeToCContainer.static.jsx'
+
+const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
+	const items = []
+	let hasActive = false
+	for (const node of nodes) {
+		const nodeRoute = node.routeHref || node.routePath || ''
+		if (node.type === 'directory') {
+			const label = node.title || node.name
+			const isActive = nodeRoute === currentRoute
+			const href = node.routePath ? encodeURI(node.routeHref || node.routePath) : null
+			const childResult = renderPageTree(node.children || [], currentRoute, depth + 1)
+			const isOpen = depth < 1 || isActive || childResult.hasActive
+			if (isOpen) hasActive = true
+			const header = href ? (
+				<a class={isActive ? 'nav-dir-link active' : 'nav-dir-link'} href={href}>
+					{label}
+				</a>
+			) : (
+				<span class="nav-dir-label">{label}</span>
+			)
+			items.push(
+				<li class={isActive ? 'is-active' : null}>
+					<details class="sidebar-collapsible" open={isOpen ? true : null}>
+						<summary class="sb-dir-header">{header}</summary>
+						{childResult.items.length ? <ul data-depth={depth + 1}>{childResult.items}</ul> : null}
+					</details>
+				</li>
+			)
+			continue
+		}
+		const label = node.title || (node.isIndex ? 'Home' : node.name)
+		const isActive = nodeRoute === currentRoute
+		if (isActive) hasActive = true
+		const href = encodeURI(node.routeHref || node.routePath)
+		items.push(
+			<li>
+				<a class={isActive ? 'active' : null} href={href}>
+					{label}
+				</a>
+			</li>
+		)
+	}
+	return { items, hasActive }
+}
+
+const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
+	const page = ctx.page
+	const pagesByRoute = ctx.pagesByRoute
+	const pages = ctx.pages || []
+	const pagesTree = ctx.pagesTree || []
+	const siteName = ctx.site?.name || 'Methanol Site'
+	const title = page?.title || siteName
+	const currentRoute = page?.routeHref || page?.routePath || ''
+	const baseHref = page?.routePath === '/404' ? ctx.site?.base || '/' : null
+	const toc = page?.toc?.length ? renderToc(page.toc) : null
+	const hasToc = Boolean(toc)
+	const layoutClass = hasToc ? 'layout-container' : 'layout-container no-toc'
+	const tree = renderPageTree(pagesTree, currentRoute, 0)
+	const { ThemeSearchBox, ThemeColorSwitch, ThemeAccentSwitch, ThemeToCContainer } = components
+	const rootPage = pagesByRoute?.get?.('/') || pages.find((entry) => entry.routePath === '/')
+	const pageFrontmatter = page?.frontmatter || {}
+	const rootFrontmatter = rootPage?.frontmatter || {}
+	const themeLogo = '/logo.png'
+	const themeFavIcon = '/favicon.png'
+	const logo = pageFrontmatter.logo ?? rootFrontmatter.logo ?? ctx.site?.logo ?? themeLogo
+	const favicon = pageFrontmatter.favicon ?? rootFrontmatter.favicon ?? ctx.site?.favicon ?? themeFavIcon
+	const excerpt = pageFrontmatter.excerpt ?? null
+	const ogTitle = pageFrontmatter.ogTitle ?? null
+	const ogDescription = pageFrontmatter.ogDescription ?? null
+	const ogImage = pageFrontmatter.ogImage ?? null
+	const ogUrl = pageFrontmatter.ogUrl ?? null
+	const twitterTitle = pageFrontmatter.twitterTitle ?? ogTitle
+	const twitterDescription = pageFrontmatter.twitterDescription ?? ogDescription ?? excerpt
+	const twitterImage = pageFrontmatter.twitterImage ?? ogImage
+	const twitterCard = pageFrontmatter.twitterCard ?? (twitterImage ? 'summary_large_image' : null)
+	const siblings = typeof page?.getSiblings === 'function' ? page.getSiblings() : null
+	const prevPage = siblings?.prev || null
+	const nextPage = siblings?.next || null
+	const languages = Array.isArray(ctx.languages) ? ctx.languages : []
+	const currentLanguageHref = ctx.language?.href || ctx.language?.routePath || null
+	const languageCode =
+		pageFrontmatter.langCode ?? rootFrontmatter.langCode ?? ctx.language?.code ?? 'en'
+	const htmlLang = typeof languageCode === 'string' && languageCode.trim() ? languageCode : 'en'
+	const pagefindEnabled = ctx.site?.pagefind?.enabled !== false
+	const pagefindOptions = ctx.site?.pagefind?.options || null
+	const languageSelector = languages.length ? (
+		<div class="lang-switch-wrapper">
+			<select
+				class="lang-switch-select"
+				aria-label="Select language"
+				onchange="location.href=this.value"
+				value={currentLanguageHref || undefined}
+			>
+				{languages.map((lang) => {
+					const optionValue = lang.href || lang.routePath
+					const isSelected = optionValue && optionValue === currentLanguageHref
+					return (
+						<option value={optionValue} selected={isSelected ? true : null}>
+							{lang.label}
+						</option>
+					)
+				})}
+			</select>
+			<div class="lang-switch-icon">
+				<svg
+					width="18"
+					height="18"
+					viewBox="0 0 24 24"
+					fill="none"
+					stroke="currentColor"
+					stroke-width="2"
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				>
+					<circle cx="12" cy="12" r="10"></circle>
+					<line x1="2" y1="12" x2="22" y2="12"></line>
+					<path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+				</svg>
+			</div>
+		</div>
+	) : null
+	return (
+		<>
+			{R.rawHTML`<!DOCTYPE html>`}
+			<html lang={htmlLang}>
+				<head>
+					<meta charset="UTF-8" />
+					<meta name="viewport" content="width=device-width" />
+					<title>
+						{title} | {siteName}
+					</title>
+					{baseHref ? <base href={baseHref} /> : null}
+					<link rel="icon" href={favicon} />
+					{excerpt ? <meta name="description" content={excerpt} /> : null}
+					{ogTitle ? <meta property="og:title" content={ogTitle} /> : null}
+					{ogDescription ? <meta property="og:description" content={ogDescription} /> : null}
+					{ogImage ? <meta property="og:image" content={ogImage} /> : null}
+					{ogUrl ? <meta property="og:url" content={ogUrl} /> : null}
+					{twitterCard ? <meta name="twitter:card" content={twitterCard} /> : null}
+					{twitterTitle ? <meta name="twitter:title" content={twitterTitle} /> : null}
+					{twitterDescription ? <meta name="twitter:description" content={twitterDescription} /> : null}
+					{twitterImage ? <meta name="twitter:image" content={twitterImage} /> : null}
+					<ExtraHead />
+					<link rel="preload stylesheet" as="style" href="/.methanol_theme_default/style.css" />
+					{R.rawHTML`
+						<script>
+							(function() {
+								const savedTheme = localStorage.getItem('methanol-theme');
+								const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+								const theme = savedTheme || systemTheme;
+								document.documentElement.classList.toggle('light', theme === 'light');
+								document.documentElement.classList.toggle('dark', theme === 'dark');
+
+								const savedAccent = localStorage.getItem('methanol-accent');
+								if (savedAccent && savedAccent !== 'default') {
+									document.documentElement.classList.add('accent-' + savedAccent);
+								}
+							})();
+						</script>
+					`}
+					<script type="module" src="/.methanol_theme_default/prefetch.js" defer></script>
+				</head>
+				<body>
+					<input type="checkbox" id="nav-toggle" class="nav-toggle" />
+					<label class="nav-toggle-label" for="nav-toggle" aria-label="Toggle navigation">
+						<svg
+							width="24"
+							height="24"
+							viewBox="0 0 24 24"
+							fill="none"
+							stroke="currentColor"
+							stroke-width="2"
+							stroke-linecap="round"
+							stroke-linejoin="round"
+						>
+							<line x1="3" y1="12" x2="21" y2="12"></line>
+							<line x1="3" y1="6" x2="21" y2="6"></line>
+							<line x1="3" y1="18" x2="21" y2="18"></line>
+						</svg>
+					</label>
+					{pagefindEnabled ? (
+						<button
+							class="search-toggle-label"
+							aria-label="Open search"
+							onclick="window.__methanolSearchOpen()"
+						>
+							<svg
+								width="24"
+								height="24"
+								viewBox="0 0 24 24"
+								fill="none"
+								stroke="currentColor"
+								stroke-width="2"
+								stroke-linecap="round"
+								stroke-linejoin="round"
+							>
+								<circle cx="11" cy="11" r="8"></circle>
+								<line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+							</svg>
+						</button>
+					) : null}
+					{hasToc ? (
+						<>
+							<input type="checkbox" id="toc-toggle" class="toc-toggle" />
+							<label class="toc-toggle-label" for="toc-toggle" aria-label="Toggle table of contents">
+								<svg
+									width="20"
+									height="20"
+									viewBox="0 0 24 24"
+									fill="none"
+									stroke="currentColor"
+									stroke-width="2"
+									stroke-linecap="round"
+									stroke-linejoin="round"
+								>
+									<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+									<path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+								</svg>
+							</label>
+						</>
+					) : null}
+					<label class="nav-scrim nav-scrim-nav" for="nav-toggle" aria-label="Close navigation"></label>
+					{hasToc ? (
+						<label class="nav-scrim nav-scrim-toc" for="toc-toggle" aria-label="Close table of contents"></label>
+					) : null}
+					<div class={layoutClass}>
+						<aside class="sidebar">
+							<div class="sidebar-header">
+								<div class="logo">
+									<img src={logo} />
+									<span>{siteName}</span>
+								</div>
+								{pagefindEnabled ? <ThemeSearchBox options={pagefindOptions} /> : null}
+							</div>
+							<nav>
+								<ul data-depth="0">{tree.items}</ul>
+							</nav>
+							<div class="sidebar-footer">
+								{languageSelector}
+								<ThemeColorSwitch />
+								<ThemeAccentSwitch />
+							</div>
+						</aside>
+						<main class="main-content" data-pagefind-body={pagefindEnabled ? '' : null}>
+							<Page />
+							{prevPage || nextPage ? (
+								<nav class="page-nav">
+									{prevPage ? (
+										<a class="page-nav-card prev" href={prevPage.routeHref || prevPage.routePath}>
+											<span class="page-nav-label">Previous</span>
+											<span class="page-nav-title">{prevPage.title || prevPage.routePath}</span>
+										</a>
+									) : <div class="page-nav-spacer"></div>}
+									{nextPage ? (
+										<a class="page-nav-card next" href={nextPage.routeHref || nextPage.routePath}>
+											<span class="page-nav-label">Next</span>
+											<span class="page-nav-title">{nextPage.title || nextPage.routePath}</span>
+										</a>
+									) : null}
+								</nav>
+							) : null}
+							{page ? (
+								<footer class="page-meta">
+									<div class="page-meta-item">
+										Updated: {page.updatedAt || '-'}
+									</div>
+									<div class="page-meta-item">
+										Powered by <a href="https://github.com/SudoMaker/Methanol" target="_blank" rel="noopener noreferrer" class="methanol-link">Methanol</a>
+									</div>
+								</footer>
+							) : null}
+						</main>
+						{hasToc ? <ThemeToCContainer>{...toc}</ThemeToCContainer> : null}
+					</div>
+				</body>
+			</html>
+		</>
+	)
+}
+
+export default PAGE_TEMPLATE
