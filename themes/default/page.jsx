@@ -86,7 +86,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	const themeFavIcon = '/favicon.png'
 	const logo = pageFrontmatter.logo ?? rootFrontmatter.logo ?? ctx.site?.logo ?? themeLogo
 	const favicon = pageFrontmatter.favicon ?? rootFrontmatter.favicon ?? ctx.site?.favicon ?? themeFavIcon
-	const excerpt = pageFrontmatter.excerpt ?? null
+	const excerpt = pageFrontmatter.excerpt ?? `${title} | ${siteName} - Powered by Methanol`
 	const ogTitle = pageFrontmatter.ogTitle ?? null
 	const ogDescription = pageFrontmatter.ogDescription ?? null
 	const ogImage = pageFrontmatter.ogImage ?? null
@@ -100,8 +100,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	const nextPage = siblings?.next || null
 	const languages = Array.isArray(ctx.languages) ? ctx.languages : []
 	const currentLanguageHref = ctx.language?.href || ctx.language?.routePath || null
-	const languageCode =
-		pageFrontmatter.langCode ?? rootFrontmatter.langCode ?? ctx.language?.code ?? 'en'
+	const languageCode = pageFrontmatter.langCode ?? rootFrontmatter.langCode ?? ctx.language?.code ?? 'en'
 	const htmlLang = typeof languageCode === 'string' && languageCode.trim() ? languageCode : 'en'
 	const pagefindEnabled = ctx.site?.pagefind?.enabled !== false
 	const pagefindOptions = ctx.site?.pagefind?.options || null
@@ -153,7 +152,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 					</title>
 					{baseHref ? <base href={baseHref} /> : null}
 					<link rel="icon" href={favicon} />
-					{excerpt ? <meta name="description" content={excerpt} /> : null}
+					<meta name="description" content={excerpt} />
 					{ogTitle ? <meta property="og:title" content={ogTitle} /> : null}
 					{ogDescription ? <meta property="og:description" content={ogDescription} /> : null}
 					{ogImage ? <meta property="og:image" content={ogImage} /> : null}
@@ -201,11 +200,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 						</svg>
 					</label>
 					{pagefindEnabled ? (
-						<button
-							class="search-toggle-label"
-							aria-label="Open search"
-							onclick="window.__methanolSearchOpen()"
-						>
+						<button class="search-toggle-label" aria-label="Open search" onclick="window.__methanolSearchOpen()">
 							<svg
 								width="24"
 								height="24"
@@ -249,7 +244,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 						<aside class="sidebar">
 							<div class="sidebar-header">
 								<div class="logo">
-									<img src={logo} />
+									<img src={logo} alt="logo" fetchpriority="high"/>
 									<span>{siteName}</span>
 								</div>
 								{pagefindEnabled ? <ThemeSearchBox options={pagefindOptions} /> : null}
@@ -272,7 +267,9 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 											<span class="page-nav-label">Previous</span>
 											<span class="page-nav-title">{prevPage.title || prevPage.routePath}</span>
 										</a>
-									) : <div class="page-nav-spacer"></div>}
+									) : (
+										<div class="page-nav-spacer"></div>
+									)}
 									{nextPage ? (
 										<a class="page-nav-card next" href={nextPage.routeHref || nextPage.routePath}>
 											<span class="page-nav-label">Next</span>
@@ -283,11 +280,17 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 							) : null}
 							{page ? (
 								<footer class="page-meta">
+									<div class="page-meta-item">Updated: {page.updatedAt || '-'}</div>
 									<div class="page-meta-item">
-										Updated: {page.updatedAt || '-'}
-									</div>
-									<div class="page-meta-item">
-										Powered by <a href="https://github.com/SudoMaker/Methanol" target="_blank" rel="noopener noreferrer" class="methanol-link">Methanol</a>
+										Powered by{' '}
+										<a
+											href="https://github.com/SudoMaker/Methanol"
+											target="_blank"
+											rel="noopener noreferrer"
+											class="methanol-link"
+										>
+											Methanol
+										</a>
 									</div>
 								</footer>
 							) : null}

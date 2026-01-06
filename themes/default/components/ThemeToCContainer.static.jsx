@@ -53,7 +53,7 @@ export default function (props, ...children) {
 	return (
 		<aside class="toc-panel">
 			<div class="toc">
-				<h4>On this page</h4>
+				<div class="toc-heading">On this page</div>
 				<ul>{...children}</ul>
 			</div>
 		</aside>

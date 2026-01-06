@@ -21,7 +21,7 @@
 export function heading(Tag) {
 	return (props, ...children) => (
 		<Tag {...props}>
-			{props.id && <a class="heading-anchor" href={`#${props.id}`} aria-hidden />}
+			{props.id && <a class="heading-anchor" href={`#${props.id}`} aria-label={`Link to ${props.id}`}/>}
 			{...children}
 		</Tag>
 	)

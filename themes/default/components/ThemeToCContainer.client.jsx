@@ -29,19 +29,21 @@ export default function (props, ...children) {
 	const top = signal(0)
 	const height = signal(0)
 	const opacity = signal(0)
-	
+
 	const updateActive = () => {
 		if (!el.value) return
-		
+
 		const links = Array.from(el.value.querySelectorAll('a'))
 		if (!links.length) return
 
 		// Map links to their corresponding content anchors
-		const anchors = links.map(link => {
-			const href = link.getAttribute('href')
-			if (!href || !href.startsWith('#')) return null
-			return document.getElementById(href.slice(1))
-		}).filter(Boolean)
+		const anchors = links
+			.map((link) => {
+				const href = link.getAttribute('href')
+				if (!href || !href.startsWith('#')) return null
+				return document.getElementById(href.slice(1))
+			})
+			.filter(Boolean)
 
 		if (!anchors.length) return
 
@@ -56,13 +58,13 @@ export default function (props, ...children) {
 		for (let i = 0; i < anchors.length; i++) {
 			const anchor = anchors[i]
 			const nextAnchor = anchors[i + 1]
-			
+
 			const sectionStart = anchor.offsetTop - threshold
 			const sectionEnd = nextAnchor ? nextAnchor.offsetTop - threshold : document.body.offsetHeight
 
 			// A section is visible if its range overlaps with the viewport [scrollY, scrollY + windowHeight]
-			const isVisible = sectionStart < (scrollY + windowHeight - threshold) && sectionEnd > scrollY
-			
+			const isVisible = sectionStart < scrollY + windowHeight - threshold && sectionEnd > scrollY
+
 			if (isVisible) {
 				visibleAnchors.add(anchor)
 			}
@@ -77,10 +79,10 @@ export default function (props, ...children) {
 		let firstActiveLink = null
 		let lastActiveLink = null
 
-		links.forEach(l => {
+		links.forEach((l) => {
 			const href = l.getAttribute('href')
 			const anchorId = href ? href.slice(1) : null
-			const anchor = anchors.find(a => a.id === anchorId)
+			const anchor = anchors.find((a) => a.id === anchorId)
 			if (visibleAnchors.has(anchor)) {
 				l.classList.add('active')
 				if (!firstActiveLink) firstActiveLink = l
@@ -130,7 +132,7 @@ export default function (props, ...children) {
 			ticking = true
 		}
 	}
-	
+
 	// Wait for mount/layout
 	useEffect(() => {
 		updateActive()
@@ -144,9 +146,14 @@ export default function (props, ...children) {
 
 	return (
 		<aside class="toc-panel" $ref={el}>
-			<div class="toc-indicator" style:top={t`${top}px`} style:height={t`${height}px`} style:opacity={t`${opacity}`}></div>
+			<div
+				class="toc-indicator"
+				style:top={t`${top}px`}
+				style:height={t`${height}px`}
+				style:opacity={t`${opacity}`}
+			></div>
 			<div class="toc">
-				<h4>On this page</h4>
+				<div class="toc-heading">On this page</div>
 				<ul>{...children}</ul>
 			</div>
 		</aside>
