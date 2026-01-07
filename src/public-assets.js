@@ -48,7 +48,7 @@ const linkOrCopyFile = async (src, dest) => {
 
 	try {
 		await ensureDir(dirname(dest))
-		
+
 		if (isWindows) {
 			// Windows: Check for different drives first
 			if (parse(src).root.toLowerCase() !== parse(dest).root.toLowerCase()) {
@@ -85,7 +85,7 @@ const processDir = async (sourceDir, targetDir, accumulated = new Set()) => {
 		const sourcePath = resolve(sourceDir, entry)
 		const targetPath = resolve(targetDir, entry)
 		const stats = await stat(sourcePath)
-		
+
 		if (stats.isDirectory()) {
 			await processDir(sourcePath, targetPath, accumulated)
 		} else {
@@ -104,7 +104,7 @@ export const preparePublicAssets = async ({ themeDir, userDir, targetDir }) => {
 	if (themeDir) {
 		await processDir(themeDir, targetDir)
 	}
-	
+
 	if (userDir) {
 		await processDir(userDir, targetDir)
 	}
@@ -112,7 +112,7 @@ export const preparePublicAssets = async ({ themeDir, userDir, targetDir }) => {
 
 export const updateAsset = async ({ type, filePath, themeDir, userDir, targetDir, relPath }) => {
 	const targetPath = resolve(targetDir, relPath)
-	
+
 	if (type === 'unlink') {
 		try {
 			try {
@@ -122,7 +122,7 @@ export const updateAsset = async ({ type, filePath, themeDir, userDir, targetDir
 					await rm(targetPath, { recursive: true, force: true })
 				}
 			}
-			
+
 			if (themeDir) {
 				const themePath = resolve(themeDir, relPath)
 				if (existsSync(themePath)) {
