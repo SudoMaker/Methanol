@@ -290,15 +290,36 @@ export const applyConfig = async (config, mode) => {
 	if (hasOwn(state.USER_THEME, 'publicDir') && state.THEME_PUBLIC_DIR && !existsSync(state.THEME_PUBLIC_DIR)) {
 		throw new Error(`Theme public directory not found: ${state.THEME_PUBLIC_DIR}`)
 	}
-	if (
-		state.STATIC_DIR !== false &&
-		!userSpecifiedPublicDir &&
-		!existsSync(state.STATIC_DIR) &&
-		state.THEME_PUBLIC_DIR &&
-		existsSync(state.THEME_PUBLIC_DIR)
-	) {
-		state.STATIC_DIR = state.THEME_PUBLIC_DIR
+
+	// Asset Merging Logic
+	const userAssetsDir = userSpecifiedPublicDir 
+		? resolveFromRoot(root, publicDirValue, 'public')
+		: resolveFromRoot(root, 'public', 'public')
+	
+	const hasUserAssets = existsSync(userAssetsDir)
+	state.USER_ASSETS_DIR = hasUserAssets ? userAssetsDir : null
+	state.THEME_ASSETS_DIR = state.THEME_PUBLIC_DIR && existsSync(state.THEME_PUBLIC_DIR) ? state.THEME_PUBLIC_DIR : null
+
+	if (state.STATIC_DIR !== false) {
+		if (!hasUserAssets) {
+			// Optimization: No user assets, just use theme assets directly
+			state.STATIC_DIR = state.THEME_ASSETS_DIR
+			state.MERGED_ASSETS_DIR = null
+		} else {
+			// We need to merge
+			const nodeModulesPath = resolve(root, 'node_modules')
+			if (existsSync(nodeModulesPath)) {
+				state.MERGED_ASSETS_DIR = resolve(nodeModulesPath, '.methanol/assets')
+			} else {
+				state.MERGED_ASSETS_DIR = resolve(state.PAGES_DIR || resolve(root, 'pages'), '.methanol/assets')
+			}
+			state.STATIC_DIR = state.MERGED_ASSETS_DIR
+		}
+	} else {
+		state.STATIC_DIR = false
+		state.MERGED_ASSETS_DIR = null
 	}
+
 	state.SOURCES = normalizeSources(state.USER_THEME.sources, themeRoot)
 	state.USER_VITE_CONFIG = config.vite || null
 	state.USER_MDX_CONFIG = config.mdx || null

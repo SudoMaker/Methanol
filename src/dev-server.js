@@ -39,10 +39,13 @@ import {
 import { buildPagesContext, buildPageEntry, routePathFromFile } from './pages.js'
 import { compilePageMdx, renderHtml } from './mdx.js'
 import { methanolResolverPlugin } from './vite-plugins.js'
-import { copyPublicDir } from './public-assets.js'
+import { preparePublicAssets, updateAsset } from './public-assets.js'
 
 export const runViteDev = async () => {
 	const baseFsAllow = [state.ROOT_DIR, state.USER_THEME.root].filter(Boolean)
+	if (state.MERGED_ASSETS_DIR) {
+		baseFsAllow.push(state.MERGED_ASSETS_DIR)
+	}
 	const baseConfig = {
 		configFile: false,
 		root: state.PAGES_DIR,
@@ -63,11 +66,11 @@ export const runViteDev = async () => {
 	}
 	const userConfig = await resolveUserViteConfig('serve')
 	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
-	if (state.STATIC_DIR !== false) {
-		await copyPublicDir({
-			sourceDir: state.THEME_PUBLIC_DIR,
-			targetDir: state.STATIC_DIR,
-			label: 'theme public'
+	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
+		await preparePublicAssets({
+			themeDir: state.THEME_ASSETS_DIR,
+			userDir: state.USER_ASSETS_DIR,
+			targetDir: state.MERGED_ASSETS_DIR
 		})
 	}
 	if (cli.CLI_PORT != null) {
@@ -93,6 +96,28 @@ export const runViteDev = async () => {
 		}
 	}
 	const server = await createServer(finalConfig)
+
+	if (state.MERGED_ASSETS_DIR && state.USER_ASSETS_DIR) {
+		const assetWatcher = chokidar.watch(state.USER_ASSETS_DIR, {
+			ignoreInitial: true
+		})
+		const handleAssetUpdate = (type, filePath) => {
+			const relPath = relative(state.USER_ASSETS_DIR, filePath)
+			enqueue(async () => {
+				await updateAsset({
+					type,
+					filePath,
+					relPath,
+					themeDir: state.THEME_ASSETS_DIR,
+					userDir: state.USER_ASSETS_DIR,
+					targetDir: state.MERGED_ASSETS_DIR
+				})
+			})
+		}
+		assetWatcher.on('add', (filePath) => handleAssetUpdate('add', filePath))
+		assetWatcher.on('change', (filePath) => handleAssetUpdate('change', filePath))
+		assetWatcher.on('unlink', (filePath) => handleAssetUpdate('unlink', filePath))
+	}
 
 	const themeComponentsDir = state.THEME_COMPONENTS_DIR
 	const themeEnv = state.THEME_ENV

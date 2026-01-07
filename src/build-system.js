@@ -28,7 +28,7 @@ import { renderHtml } from './mdx.js'
 import { buildComponentRegistry } from './components.js'
 import { methanolVirtualHtmlPlugin, methanolResolverPlugin } from './vite-plugins.js'
 import { createStageLogger } from './stage-logger.js'
-import { copyPublicDir } from './public-assets.js'
+import { preparePublicAssets } from './public-assets.js'
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
@@ -163,11 +163,11 @@ export const buildHtmlEntries = async () => {
 }
 
 export const runViteBuild = async (entry, htmlCache) => {
-	if (state.STATIC_DIR !== false) {
-		await copyPublicDir({
-			sourceDir: state.THEME_PUBLIC_DIR,
-			targetDir: state.STATIC_DIR,
-			label: 'theme public'
+	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
+		await preparePublicAssets({
+			themeDir: state.THEME_ASSETS_DIR,
+			userDir: state.USER_ASSETS_DIR,
+			targetDir: state.MERGED_ASSETS_DIR
 		})
 	}
 	const copyPublicDirEnabled = state.STATIC_DIR !== false
