@@ -89,8 +89,9 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	const logo = pageFrontmatter.logo ?? rootFrontmatter.logo ?? ctx.site?.logo ?? themeLogo
 	const favicon = pageFrontmatter.favicon ?? rootFrontmatter.favicon ?? ctx.site?.favicon ?? themeFavIcon
 	const excerpt = pageFrontmatter.excerpt ?? `${title} | ${siteName} - Powered by Methanol`
-	const ogTitle = pageFrontmatter.ogTitle ?? null
-	const ogDescription = pageFrontmatter.ogDescription ?? null
+	const _ogTitle = pageFrontmatter.ogTitle ?? title ?? null
+	const ogTitle = _ogTitle ? `${_ogTitle} | ${siteName}` : null
+	const ogDescription = pageFrontmatter.ogDescription ?? excerpt ?? null
 	const ogImage = pageFrontmatter.ogImage ?? null
 	const ogUrl = pageFrontmatter.ogUrl ?? null
 	const twitterTitle = pageFrontmatter.twitterTitle ?? ogTitle
