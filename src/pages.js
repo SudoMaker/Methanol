@@ -273,7 +273,10 @@ const buildPagesTree = (pages, options = {}) => {
 			const shouldExposeHidden =
 				!isHidden404 &&
 				page.hiddenByFrontmatter === true &&
-				(page.routePath === currentRoutePath || isUnderExposedHiddenDir(page.dir))
+				(
+					page.routePath === currentRoutePath ||
+					(page.isIndex && page.dir && isUnderExposedHiddenDir(page.dir))
+				)
 			if (!shouldExposeHidden) {
 				continue
 			}
