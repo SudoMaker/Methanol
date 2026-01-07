@@ -679,7 +679,9 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 	let pagesTree = getPagesTree('/')
 	const notFound = pagesByRoute.get('/404') || null
 	const languages = collectLanguagesFromPages(pages)
+	const userSite = state.USER_SITE || {}
 	const site = {
+		...userSite,
 		name: state.SITE_NAME,
 		root: state.ROOT_DIR,
 		pagesDir: state.PAGES_DIR,

@@ -216,6 +216,7 @@ export const applyConfig = async (config, mode) => {
 	state.ROOT_DIR = root
 	const configSiteName = cli.CLI_SITE_NAME ?? config.site?.name ?? null
 	state.SITE_NAME = configSiteName || basename(root) || 'Methanol Site'
+	state.USER_SITE = config.site && typeof config.site === 'object' ? { ...config.site } : null
 	if (mode) {
 		state.CURRENT_MODE = mode
 	}

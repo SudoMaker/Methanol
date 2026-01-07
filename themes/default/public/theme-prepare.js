@@ -18,7 +18,19 @@
  * under the License.
  */
 
-(() => {
+;(function initThemeColor() {
+	const savedTheme = localStorage.getItem('methanol-theme')
+	const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+	const theme = savedTheme || systemTheme
+	document.documentElement.classList.toggle('light', theme === 'light')
+	document.documentElement.classList.toggle('dark', theme === 'dark')
+
+	const savedAccent = localStorage.getItem('methanol-accent')
+	if (savedAccent && savedAccent !== 'default') {
+		document.documentElement.classList.add('accent-' + savedAccent)
+	}
+})()
+;(function initPrefetch() {
 	const prefetched = new Set()
 	const canPrefetch = (anchor) => {
 		if (!anchor || !anchor.href) return false

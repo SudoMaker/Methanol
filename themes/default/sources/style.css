@@ -270,7 +270,7 @@ a {
 .sidebar {
 	position: sticky;
 	top: 0;
-	height: 100vh;
+	height: 100dvh;
 	overflow: visible;
 	padding: 2rem 0;
 	display: flex;
@@ -1420,6 +1420,7 @@ a {
 	transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
 	position: relative;
 	overflow: hidden;
+	-webkit-tap-highlight-color: transparent;
 
 	&:hover {
 		border-color: var(--accent);
@@ -1473,7 +1474,7 @@ a {
 
 .page-nav-card.next {
 	text-align: right;
-	align-items: flex-end;
+	align-items: stretch;
 
 	.page-nav-label {
 		justify-content: flex-end;
@@ -1492,26 +1493,6 @@ a {
 	.page-nav {
 		grid-template-columns: 1fr;
 		gap: 1rem;
-	}
-
-	.page-nav-card.next {
-		text-align: left;
-		align-items: flex-start;
-
-		.page-nav-label {
-			flex-direction: row;
-		}
-
-		.page-nav-label::after {
-			display: none;
-		}
-
-		.page-nav-label::before {
-			content: '→';
-			font-family: system-ui;
-			margin-right: 0.1rem;
-			transition: transform 0.2s ease;
-		}
 	}
 }
 
@@ -1566,7 +1547,7 @@ a {
 	.toc-panel {
 		position: fixed;
 		top: 0;
-		bottom: 0;
+		height: 100dvh;
 		width: 280px;
 		background: var(--surface);
 		border: 1px solid var(--border);

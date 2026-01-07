@@ -160,6 +160,7 @@ export const state = {
 	THEME_PUBLIC_DIR: null,
 	THEME_ENV: null,
 	USER_THEME: null,
+	USER_SITE: null,
 	USER_VITE_CONFIG: null,
 	USER_MDX_CONFIG: null,
 	USER_PUBLIC_OVERRIDE: false,

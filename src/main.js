@@ -62,6 +62,7 @@ const main = async () => {
 	const mode = isDev ? 'development' : 'production'
 	const config = await loadUserConfig(mode, cli.CLI_CONFIG_PATH)
 	await applyConfig(config, mode)
+	const userSite = state.USER_SITE || {}
 	const hookContext = {
 		mode,
 		root: state.ROOT_DIR,
@@ -71,6 +72,7 @@ const main = async () => {
 		isPreview,
 		HTMLRenderer,
 		site: {
+			...userSite,
 			name: state.SITE_NAME,
 			root: state.ROOT_DIR,
 			pagesDir: state.PAGES_DIR,

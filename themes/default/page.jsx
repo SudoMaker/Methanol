@@ -21,6 +21,8 @@
 import { HTMLRenderer as R } from 'methanol'
 import { renderToc } from './components/ThemeToCContainer.static.jsx'
 
+const DOCHTML = R.rawHTML`<!DOCTYPE html>`
+
 const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
 	const items = []
 	let hasActive = false
@@ -142,7 +144,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	) : null
 	return (
 		<>
-			{R.rawHTML`<!DOCTYPE html>`}
+			{DOCHTML}
 			<html lang={htmlLang}>
 				<head>
 					<meta charset="UTF-8" />
@@ -151,7 +153,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 						{title} | {siteName}
 					</title>
 					{baseHref ? <base href={baseHref} /> : null}
-					<link rel="icon" href={favicon} />
+					{favicon ? <link rel="icon" href={favicon} /> : null}
 					<meta name="description" content={excerpt} />
 					{ogTitle ? <meta property="og:title" content={ogTitle} /> : null}
 					{ogDescription ? <meta property="og:description" content={ogDescription} /> : null}
@@ -163,23 +165,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 					{twitterImage ? <meta name="twitter:image" content={twitterImage} /> : null}
 					<ExtraHead />
 					<link rel="preload stylesheet" as="style" href="/.methanol_theme_default/style.css" />
-					{R.rawHTML`
-						<script>
-							(function() {
-								const savedTheme = localStorage.getItem('methanol-theme');
-								const systemTheme = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
-								const theme = savedTheme || systemTheme;
-								document.documentElement.classList.toggle('light', theme === 'light');
-								document.documentElement.classList.toggle('dark', theme === 'dark');
-
-								const savedAccent = localStorage.getItem('methanol-accent');
-								if (savedAccent && savedAccent !== 'default') {
-									document.documentElement.classList.add('accent-' + savedAccent);
-								}
-							})();
-						</script>
-					`}
-					<script type="module" src="/.methanol_theme_default/prefetch.js" defer></script>
+					<script src="/theme-prepare.js"></script>
 				</head>
 				<body>
 					<input type="checkbox" id="nav-toggle" class="nav-toggle" />
@@ -244,7 +230,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 						<aside class="sidebar">
 							<div class="sidebar-header">
 								<div class="logo">
-									<img src={logo} alt="logo" fetchpriority="high"/>
+									{logo ? <img src={logo} alt="logo" fetchpriority="high"/> : null}
 									<span>{siteName}</span>
 								</div>
 								{pagefindEnabled ? <ThemeSearchBox options={pagefindOptions} /> : null}
