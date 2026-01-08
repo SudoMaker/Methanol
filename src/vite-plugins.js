@@ -24,8 +24,9 @@ import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { normalizePath } from 'vite'
 import { state } from './state.js'
+import { resolveBasePrefix } from './config.js'
 import { genRegistryScript } from './components.js'
-import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_SCRIPT } from './assets.js'
+import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT } from './assets.js'
 import { projectRequire } from './node-loader.js'
 
 const require = createRequire(import.meta.url)
@@ -60,6 +61,9 @@ export const methanolPreviewRoutingPlugin = (distDir, notFoundPath) => ({
 				cachedHtml = await readFile(notFoundPath, 'utf-8')
 				return cachedHtml
 			}
+
+			const basePrefix = resolveBasePrefix()
+
 			const handler = async (req, res, next) => {
 				if (!req.url || req.method !== 'GET') {
 					return next()
@@ -69,6 +73,13 @@ export const methanolPreviewRoutingPlugin = (distDir, notFoundPath) => ({
 				try {
 					pathname = new URL(req.url, 'http://methanol').pathname
 					pathname = decodeURIComponent(pathname)
+					if (basePrefix) {
+						if (pathname.startsWith(basePrefix)) {
+							pathname = pathname.slice(basePrefix.length)
+						} else {
+							return next()
+						}
+					}
 				} catch {}
 				const hasTrailingSlash = pathname.endsWith('/') && pathname !== '/'
 				if (pathname.includes('.') && !pathname.endsWith('.html')) {
@@ -109,18 +120,41 @@ export const methanolPreviewRoutingPlugin = (distDir, notFoundPath) => ({
 
 const virtualModulePrefix = '/.methanol_virtual_module/'
 const resolvedVirtualModulePrefix = '\0' + virtualModulePrefix
+const virtualModuleScheme = 'methanol:'
 
 const virtualModuleMap = {
+	get registry() {
+		return `export const registry = ${genRegistryScript()}`
+	},
 	get 'registry.js'() {
 		return `export const registry = ${genRegistryScript()}`
 	},
-	'loader.js': LOADER_SCRIPT,
+	loader: LOADER_SCRIPT,
 	'inject.js': INJECT_SCRIPT,
-	'pagefind.js': PAGEFIND_SCRIPT
+	'pagefind-loader': PAGEFIND_LOADER_SCRIPT
 }
 
 const getModuleIdSegment = (id, start) => {
 	return new URL(id.slice(start), 'http://methanol').pathname.slice(1)
+}
+
+const getSchemeModuleKey = (id) => {
+	if (!id.startsWith(virtualModuleScheme)) return null
+	return id.slice(virtualModuleScheme.length)
+}
+
+const resolveVirtualModuleId = (id) => {
+	if (id.startsWith(virtualModulePrefix)) {
+		return id
+	}
+	const basePrefix = resolveBasePrefix()
+	if (basePrefix) {
+		const prefixed = `${basePrefix}${virtualModulePrefix}`
+		if (id.startsWith(prefixed)) {
+			return id.slice(basePrefix.length)
+		}
+	}
+	return null
 }
 
 export const methanolResolverPlugin = () => {
@@ -139,10 +173,16 @@ export const methanolResolverPlugin = () => {
 				return require.resolve(id)
 			}
 
-			if (id.startsWith(virtualModulePrefix)) {
-				const _moduleId = getModuleIdSegment(id, virtualModulePrefix.length)
+			const schemeKey = getSchemeModuleKey(id)
+			if (schemeKey && Object.prototype.hasOwnProperty.call(virtualModuleMap, schemeKey)) {
+				return '\0' + id
+			}
+
+			const virtualId = resolveVirtualModuleId(id)
+			if (virtualId) {
+				const _moduleId = getModuleIdSegment(virtualId, virtualModulePrefix.length)
 				if (Object.prototype.hasOwnProperty.call(virtualModuleMap, _moduleId)) {
-					return '\0' + id
+					return '\0' + virtualId
 				}
 			}
 
@@ -164,6 +204,10 @@ export const methanolResolverPlugin = () => {
 			}
 		},
 		load(id) {
+			if (id.startsWith('\0' + virtualModuleScheme)) {
+				const key = id.slice(1 + virtualModuleScheme.length)
+				return virtualModuleMap[key]
+			}
 			if (id.startsWith(resolvedVirtualModulePrefix)) {
 				const _moduleId = getModuleIdSegment(id, resolvedVirtualModulePrefix.length)
 				return virtualModuleMap[_moduleId]

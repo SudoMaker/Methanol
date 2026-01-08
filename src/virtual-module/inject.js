@@ -21,10 +21,9 @@
 import { createDOMRenderer } from 'refui/dom'
 import { defaults } from 'refui/browser'
 import { lazy } from 'refui'
-import { init } from '/.methanol_virtual_module/loader.js'
-
-const reg = import('/.methanol_virtual_module/registry.js')
+import { init } from 'methanol:loader'
+import { registry } from 'methanol:registry'
 
 const R = createDOMRenderer(defaults)
 
-reg.then((m) => init(m.registry, R))
+init(registry, R)

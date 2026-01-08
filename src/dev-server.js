@@ -49,6 +49,7 @@ export const runViteDev = async () => {
 	const baseConfig = {
 		configFile: false,
 		root: state.PAGES_DIR,
+		appType: 'mpa',
 		publicDir: state.STATIC_DIR === false ? false : state.STATIC_DIR,
 		server: {
 			fs: {
@@ -66,6 +67,8 @@ export const runViteDev = async () => {
 	}
 	const userConfig = await resolveUserViteConfig('serve')
 	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
+	const devBase = state.VITE_BASE || '/'
+	const devBasePrefix = devBase === '/' ? '' : devBase.slice(0, -1)
 	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
 		await preparePublicAssets({
 			themeDir: state.THEME_ASSETS_DIR,
@@ -169,7 +172,14 @@ export const runViteDev = async () => {
 	}
 
 	const resolvePageFile = (routePath) => {
-		const name = routePath === '/' ? 'index' : routePath.slice(1)
+		let name = 'index'
+		if (routePath && routePath !== '/') {
+			if (routePath.endsWith('/')) {
+				name = `${routePath.slice(1, -1)}/index`
+			} else {
+				name = routePath.slice(1)
+			}
+		}
 		const mdxPath = resolve(state.PAGES_DIR, `${name}.mdx`)
 		if (existsSync(mdxPath)) return mdxPath
 		const mdPath = resolve(state.PAGES_DIR, `${name}.md`)
@@ -181,6 +191,8 @@ export const runViteDev = async () => {
 		const candidates = []
 		if (pathname === '/' || pathname === '') {
 			candidates.push('/index.html')
+		} else if (pathname.endsWith('/')) {
+			candidates.push(`${pathname}index.html`)
 		} else if (pathname.endsWith('.html')) {
 			candidates.push(pathname)
 		} else {
@@ -196,7 +208,7 @@ export const runViteDev = async () => {
 		if (hasMdx) return false
 		const baseName = basename(relativePath, '.html')
 		if (baseName.startsWith('_') || baseName.startsWith('.')) return false
-		const excludedDirs = pagesContext?.excludedDirs
+		const excludedDirs = pagesContext.excludedDirs
 		if (excludedDirs?.size) {
 			const dir = relativePath.split('/').slice(0, -1).join('/')
 			for (const excludedDir of excludedDirs) {
@@ -206,9 +218,9 @@ export const runViteDev = async () => {
 				}
 			}
 		}
-		const excludedRoutes = pagesContext?.excludedRoutes
+		const excludedRoutes = pagesContext.excludedRoutes
 		if (excludedRoutes?.has(requestedPath)) return false
-		const excludedDirPaths = pagesContext?.excludedDirPaths
+		const excludedDirPaths = pagesContext.excludedDirPaths
 		if (excludedDirPaths?.size) {
 			for (const dirPath of excludedDirPaths) {
 				if (requestedPath === dirPath || requestedPath.startsWith(`${dirPath}/`)) {
@@ -223,9 +235,6 @@ export const runViteDev = async () => {
 		if (!req.url || req.method !== 'GET') {
 			return next()
 		}
-		if (req.url.startsWith('/@vite') || req.url.startsWith('/__vite')) {
-			return next()
-		}
 
 		const url = new URL(req.url, 'http://methanol')
 		let pathname = url.pathname
@@ -233,7 +242,20 @@ export const runViteDev = async () => {
 			pathname = decodeURIComponent(pathname)
 		} catch {}
 		const originalPathname = pathname
-		const hasTrailingSlash = originalPathname.endsWith('/') && originalPathname !== '/'
+		if (devBase !== '/') {
+			const baseNoSlash = devBasePrefix
+			if (originalPathname === baseNoSlash) {
+				pathname = '/'
+			} else if (originalPathname.startsWith(devBase)) {
+				pathname = originalPathname.slice(devBase.length - 1)
+			} else {
+				return next()
+			}
+		}
+
+		if (pathname.startsWith('/@vite') || pathname.startsWith('/__vite')) {
+			return next()
+		}
 
 		if (pathname.includes('.') && !pathname.endsWith('.html')) {
 			return next()
@@ -251,15 +273,11 @@ export const runViteDev = async () => {
 				routePath = '/'
 			}
 		}
-		if (routePath.endsWith('/') && routePath !== '/') {
-			routePath = routePath.slice(0, -1)
-		}
-
 		const requestedPath = routePath
 		const isExcludedPath = () => {
-			const excludedRoutes = pagesContext?.excludedRoutes
+			const excludedRoutes = pagesContext.excludedRoutes
 			if (excludedRoutes?.has(requestedPath)) return true
-			const excludedDirPaths = pagesContext?.excludedDirPaths
+			const excludedDirPaths = pagesContext.excludedDirPaths
 			if (excludedDirPaths?.size) {
 				for (const dirPath of excludedDirPaths) {
 					if (requestedPath === dirPath || requestedPath.startsWith(`${dirPath}/`)) {
@@ -269,10 +287,8 @@ export const runViteDev = async () => {
 			}
 			return false
 		}
-		const notFoundPage = pagesContext?.pagesByRoute?.get('/404') ?? null
-		const pageMeta = hasTrailingSlash
-			? (pagesContext?.pagesByRouteIndex?.get(requestedPath) ?? pagesContext?.pagesByRoute?.get(requestedPath) ?? null)
-			: (pagesContext?.pagesByRoute?.get(requestedPath) ?? null)
+		const notFoundPage = pagesContext.pagesByRoute.get('/404')
+		let pageMeta = pagesContext.pagesByRoute.get(requestedPath)
 		let filePath = pageMeta?.filePath || resolvePageFile(requestedPath)
 		const hasMdx = Boolean(pageMeta) || existsSync(filePath)
 		let status = 200
@@ -291,7 +307,9 @@ export const runViteDev = async () => {
 				}
 				try {
 					const html = await readFile(candidate, 'utf-8')
-					const candidateUrl = `/${relativePath}`
+					const candidateUrl = devBasePrefix
+						? `${devBasePrefix}/${relativePath}`
+						: `/${relativePath}`
 					const transformed = await server.transformIndexHtml(candidateUrl, html)
 					res.statusCode = 200
 					res.setHeader('Content-Type', 'text/html')
@@ -338,6 +356,8 @@ export const runViteDev = async () => {
 				return
 			}
 
+			pageMeta ??= pagesContext.getPageByRoute(renderRoutePath, { filePath })
+
 			const html = await renderHtml({
 				routePath: renderRoutePath,
 				filePath,
@@ -374,15 +394,17 @@ export const runViteDev = async () => {
 	await server.listen()
 	server.printUrls()
 
+	const _invalidate = (id) => {
+		const _module = server.moduleGraph.getModuleById(id)
+		if (_module) {
+			server.moduleGraph.invalidateModule(_module)
+		}
+	}
 	const invalidateRewindInject = () => {
-		const registryModule = server.moduleGraph.getModuleById('\0/.methanol_virtual_module/registry.js')
-		if (registryModule) {
-			server.moduleGraph.invalidateModule(registryModule)
-		}
-		const injectModule = server.moduleGraph.getModuleById('\0/.methanol_virtual_module/inject.js')
-		if (injectModule) {
-			server.moduleGraph.invalidateModule(injectModule)
-		}
+		_invalidate('\0/.methanol_virtual_module/registry.js')
+		_invalidate('\0methanol:registry')
+		_invalidate('\0/.methanol_virtual_module/inject.js')
+		_invalidate('\0methanol:inject')
 	}
 
 	let queue = Promise.resolve()

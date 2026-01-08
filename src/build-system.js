@@ -61,6 +61,7 @@ const collectHtmlFiles = async (dir, basePath = '') => {
 }
 
 export const buildHtmlEntries = async () => {
+	await resolveUserViteConfig('build') // Prepare `base`
 	if (state.INTERMEDIATE_DIR) {
 		await rm(state.INTERMEDIATE_DIR, { recursive: true, force: true })
 		await ensureDir(state.INTERMEDIATE_DIR)
@@ -174,7 +175,7 @@ export const runViteBuild = async (entry, htmlCache) => {
 	const baseConfig = {
 		configFile: false,
 		root: state.PAGES_DIR,
-		base: '/',
+		appType: 'mpa',
 		publicDir: state.STATIC_DIR === false ? false : state.STATIC_DIR,
 		build: {
 			outDir: state.DIST_DIR,

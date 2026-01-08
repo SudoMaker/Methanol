@@ -27,4 +27,4 @@ const __dirname = dirname(__filename)
 
 export const INJECT_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/inject.js'), 'utf-8')
 export const LOADER_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/loader.js'), 'utf-8')
-export const PAGEFIND_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/pagefind.js'), 'utf-8')
+export const PAGEFIND_LOADER_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/pagefind-loader.js'), 'utf-8')

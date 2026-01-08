@@ -27,11 +27,11 @@ const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
 	const items = []
 	let hasActive = false
 	for (const node of nodes) {
-		const nodeRoute = node.routeHref || node.routePath || ''
+		const nodeRoute = node.routeHref || ''
 		if (node.type === 'directory') {
 			const label = node.title || node.name
 			const isActive = nodeRoute === currentRoute
-			const href = node.routePath ? encodeURI(node.routeHref || node.routePath) : null
+			const href = node.routeHref
 			const childResult = renderPageTree(node.children || [], currentRoute, depth + 1)
 			const isOpen = depth < 1 || isActive || childResult.hasActive
 			if (isOpen) hasActive = true
@@ -55,7 +55,7 @@ const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
 		const label = node.title || (node.isIndex ? 'Home' : node.name)
 		const isActive = nodeRoute === currentRoute
 		if (isActive) hasActive = true
-		const href = encodeURI(node.routeHref || node.routePath)
+		const href = node.routeHref
 		items.push(
 			<li>
 				<a class={isActive ? 'active' : null} href={href}>
@@ -67,21 +67,21 @@ const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
 	return { items, hasActive }
 }
 
-const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
+const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 	const page = ctx.page
 	const pagesByRoute = ctx.pagesByRoute
 	const pages = ctx.pages || []
 	const pagesTree = ctx.pagesTree || []
 	const siteName = ctx.site.name || 'Methanol Site'
 	const title = page.title || siteName
-	const currentRoute = page.routeHref || page.routePath || ''
-	const baseHref = page.routePath === '/404' ? ctx.site.base || '/' : null
+	const currentRoute = page.routeHref || ''
+	const baseHref = page.routeHref === '/404' ? ctx.site.base || '/' : null
 	const toc = page.toc?.length ? renderToc(page.toc) : null
 	const hasToc = Boolean(toc)
 	const layoutClass = hasToc ? 'layout-container' : 'layout-container no-toc'
 	const tree = renderPageTree(pagesTree, currentRoute, 0)
 	const { ThemeSearchBox, ThemeColorSwitch, ThemeAccentSwitch, ThemeToCContainer } = components
-	const rootPage = pagesByRoute.get('/') || pages.find((entry) => entry.routePath === '/')
+	const rootPage = pagesByRoute.get('/') || pages.find((entry) => entry.routeHref === '/')
 	const pageFrontmatter = page.frontmatter || {}
 	const rootFrontmatter = rootPage.frontmatter || {}
 	const themeLogo = '/logo.png'
@@ -102,7 +102,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	const prevPage = siblings?.prev || null
 	const nextPage = siblings?.next || null
 	const languages = Array.isArray(ctx.languages) ? ctx.languages : []
-	const currentLanguageHref = ctx.language?.href || ctx.language?.routePath || null
+	const currentLanguageHref = ctx.language?.href || ctx.language?.routeHref || null
 	const languageCode = pageFrontmatter.langCode ?? rootFrontmatter.langCode ?? ctx.language?.code ?? 'en'
 	const htmlLang = typeof languageCode === 'string' && languageCode.trim() ? languageCode : 'en'
 	const pagefindEnabled = ctx.site.pagefind?.enabled !== false
@@ -119,7 +119,7 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 				value={currentLanguageHref || undefined}
 			>
 				{languages.map((lang) => {
-					const optionValue = lang.href || lang.routePath
+					const optionValue = lang.href || lang.routeHref
 					const isSelected = optionValue && optionValue === currentLanguageHref
 					return (
 						<option value={optionValue} selected={isSelected ? true : null}>
@@ -168,7 +168,11 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 					{twitterDescription ? <meta name="twitter:description" content={twitterDescription} /> : null}
 					{twitterImage ? <meta name="twitter:image" content={twitterImage} /> : null}
 					<ExtraHead />
-					<link rel="preload stylesheet" as="style" href="/.methanol_theme_default/style.css" />
+					<link
+						rel="preload stylesheet"
+						as="style"
+						href="/.methanol_theme_default/style.css"
+					/>
 					<script src="/theme-prepare.js"></script>
 				</head>
 				<body>
@@ -249,21 +253,27 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 							</div>
 						</aside>
 						<main class="main-content" data-pagefind-body={pagefindEnabled ? '' : null}>
-							<Page />
+							<PageContent />
 							{prevPage || nextPage ? (
 								<nav class="page-nav">
 									{prevPage ? (
-										<a class="page-nav-card prev" href={prevPage.routeHref || prevPage.routePath}>
+										<a
+											class="page-nav-card prev"
+											href={prevPage.routeHref}
+										>
 											<span class="page-nav-label">Previous</span>
-											<span class="page-nav-title">{prevPage.title || prevPage.routePath}</span>
+											<span class="page-nav-title">{prevPage.title || prevPage.routeHref}</span>
 										</a>
 									) : (
 										<div class="page-nav-spacer"></div>
 									)}
 									{nextPage ? (
-										<a class="page-nav-card next" href={nextPage.routeHref || nextPage.routePath}>
+										<a
+											class="page-nav-card next"
+											href={nextPage.routeHref}
+										>
 											<span class="page-nav-label">Next</span>
-											<span class="page-nav-title">{nextPage.title || nextPage.routePath}</span>
+											<span class="page-nav-title">{nextPage.title || nextPage.routeHref}</span>
 										</a>
 									) : null}
 								</nav>

@@ -148,6 +148,8 @@ export const state = {
 	PROJECT_ROOT,
 	ROOT_DIR: PROJECT_ROOT,
 	SITE_NAME: 'Methanol Site',
+	SITE_BASE: null,
+	VITE_BASE: null,
 	PAGES_DIR: resolve(PROJECT_ROOT, 'pages'),
 	COMPONENTS_DIR: resolve(PROJECT_ROOT, 'components'),
 	STATIC_DIR: resolve(PROJECT_ROOT, 'public'),

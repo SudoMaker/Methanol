@@ -23,6 +23,7 @@ import { readdir, readFile, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve, join, relative } from 'path'
 import { state, cli } from './state.js'
+import { withBase } from './config.js'
 import { compilePageMdx } from './mdx.js'
 import { createStageLogger } from './stage-logger.js'
 
@@ -36,12 +37,11 @@ const pageDerivedCache = new Map()
 const collectLanguagesFromPages = (pages = []) => {
 	const languages = new Map()
 	for (const page of pages) {
-		if (!page?.isIndex) continue
-		const label = page?.frontmatter?.lang
+		if (!page.isIndex) continue
+		const label = page.frontmatter?.lang
 		if (label == null || label === '') continue
 		const routePath = page.routePath || '/'
-		const href = page.routeHref || routePath || '/'
-		const frontmatterCode = page?.frontmatter?.langCode
+		const frontmatterCode = page.frontmatter?.langCode
 		const code =
 			typeof frontmatterCode === 'string' && frontmatterCode.trim()
 				? frontmatterCode.trim()
@@ -50,17 +50,37 @@ const collectLanguagesFromPages = (pages = []) => {
 					: routePath.replace(/^\/+/, '')
 		languages.set(routePath, {
 			routePath,
-			href,
+			routeHref: withBase(routePath),
 			label: String(label),
 			code: code || null
 		})
 	}
-	return Array.from(languages.values()).sort((a, b) => a.href.localeCompare(b.href))
+	return Array.from(languages.values()).sort((a, b) => a.routePath.localeCompare(b.routePath))
 }
 
 const normalizeRoutePath = (value) => {
+	if (!value) return '/'
+	let normalized = value
+	if (!normalized.startsWith('/')) {
+		normalized = `/${normalized}`
+	}
+	normalized = normalized.replace(/\/{2,}/g, '/')
+	if (normalized === '/') return '/'
+	if (normalized.endsWith('/')) {
+		return normalized.replace(/\/+$/, '/')
+	}
+	return normalized
+}
+
+const stripTrailingSlash = (value) => {
 	if (!value || value === '/') return '/'
 	return value.replace(/\/+$/, '')
+}
+
+const toRoutePrefix = (value) => {
+	const normalized = normalizeRoutePath(value)
+	const stripped = stripTrailingSlash(normalized)
+	return stripped === '/' ? '' : stripped
 }
 
 const resolveLanguageForRoute = (languages = [], routePath = '/') => {
@@ -70,16 +90,17 @@ const resolveLanguageForRoute = (languages = [], routePath = '/') => {
 	let bestLength = -1
 	let rootLanguage = null
 	for (const lang of languages) {
-		const base = normalizeRoutePath(lang?.routePath || lang?.href)
+		const base = normalizeRoutePath(lang.routePath)
+		const basePrefix = toRoutePrefix(base)
 		if (!base) continue
 		if (base === '/') {
 			rootLanguage = lang
 			continue
 		}
-		if (normalizedRoute === base || normalizedRoute.startsWith(`${base}/`)) {
-			if (base.length > bestLength) {
+		if (normalizedRoute === base || (basePrefix && normalizedRoute.startsWith(`${basePrefix}/`))) {
+			if (basePrefix.length > bestLength) {
 				best = lang
-				bestLength = base.length
+				bestLength = basePrefix.length
 			}
 		}
 	}
@@ -104,7 +125,7 @@ export const routePathFromFile = (filePath, pagesDir = state.PAGES_DIR) => {
 		return '/'
 	}
 	if (normalized.endsWith('/index')) {
-		return `/${normalized.slice(0, -'/index'.length)}`
+		return `/${normalized.slice(0, -'/index'.length)}/`
 	}
 	return `/${normalized}`
 }
@@ -162,7 +183,8 @@ const stripRootPrefix = (value, rootDir) => {
 
 const buildPagesTree = (pages, options = {}) => {
 	const rootPath = normalizeRoutePath(options.rootPath || '/')
-	const rootDir = rootPath === '/' ? '' : rootPath.replace(/^\/+/, '')
+	const rootPrefix = toRoutePrefix(rootPath)
+	const rootDir = rootPrefix ? rootPrefix.replace(/^\/+/, '') : ''
 	const includeHiddenRoot = Boolean(options.includeHiddenRoot)
 	const currentRoutePath = normalizeRoutePath(options.currentRoutePath || '/')
 	const rootSegments = rootDir ? rootDir.split('/') : []
@@ -170,8 +192,8 @@ const buildPagesTree = (pages, options = {}) => {
 		if (!routePath) return '/'
 		if (!rootDir) return routePath
 		if (routePath === rootPath) return '/'
-		if (routePath.startsWith(`${rootPath}/`)) {
-			const stripped = routePath.slice(rootPath.length)
+		if (rootPrefix && routePath.startsWith(`${rootPrefix}/`)) {
+			const stripped = routePath.slice(rootPrefix.length)
 			return stripped.startsWith('/') ? stripped : `/${stripped}`
 		}
 		return routePath
@@ -179,7 +201,7 @@ const buildPagesTree = (pages, options = {}) => {
 	const currentRouteWithinRoot = resolveRouteWithinRoot(currentRoutePath)
 	const isUnderRoot = (page) => {
 		if (!rootDir) return true
-		return page.routePath === rootPath || page.routePath.startsWith(`${rootPath}/`)
+		return page.routePath === rootPath || (rootPrefix && page.routePath.startsWith(`${rootPrefix}/`))
 	}
 	const treePages = pages
 		.filter((page) => !page.isInternal)
@@ -249,10 +271,10 @@ const buildPagesTree = (pages, options = {}) => {
 			children: [],
 			depth,
 			routePath: null,
+			routeHref: null,
 			title: null,
 			weight: null,
 			date: null,
-			routeHref: null,
 			isRoot: false
 		}
 		dirs.set(path, dir)
@@ -306,7 +328,7 @@ const buildPagesTree = (pages, options = {}) => {
 		if (page.isIndex && page.dir) {
 			const dir = getDirNode(page.dir, page.dir.split('/').pop(), page.depth)
 			dir.routePath = page.routePath
-			dir.routeHref = page.routeHref || page.routePath
+			dir.routeHref = page.routeHref
 			dir.title = page.title
 			dir.weight = page.weight ?? null
 			dir.date = page.date ?? null
@@ -381,9 +403,8 @@ const walkPages = async function* (dir, basePath = '') {
 		const name = entry.replace(/\.(mdx|md)$/, '')
 		const relativePath = join(basePath, name).replace(/\\/g, '/')
 		const isIndex = name === 'index'
-		const routePath = isIndex ? (basePath ? `/${basePath}` : '/') : `/${relativePath}`
-		const routeHref = isIndex && basePath ? `/${basePath}/` : routePath
-		yield { routePath, routeHref, filePath: fullPath, isIndex }
+		const routePath = isIndex ? (basePath ? `/${basePath}/` : '/') : `/${relativePath}`
+		yield { routePath, filePath: fullPath, isIndex }
 	}
 
 	for (const { entry, fullPath } of dirs) {
@@ -400,7 +421,6 @@ export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
 	const dir = name.split('/').slice(0, -1).join('/')
 	const dirName = dir ? dir.split('/').pop() : ''
 	const isIndex = baseName === 'index'
-	const routeHref = isIndex && dir ? `/${dir}/` : routePath
 	const segments = routePath.split('/').filter(Boolean)
 	const stats = await stat(filePath)
 	const cached = pageMetadataCache.get(filePath)
@@ -423,7 +443,7 @@ export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
 			: isNotFoundPage || Boolean(metadata.frontmatter?.isRoot)
 	return {
 		routePath,
-		routeHref,
+		routeHref: withBase(routePath),
 		filePath,
 		source,
 		relativePath: relPath,
@@ -466,7 +486,6 @@ const collectPagesFromDir = async (pagesDir, source) => {
 			source
 		})
 		if (entry) {
-			entry.routeHref = page.routeHref || entry.routeHref
 			entry.isIndex = page.isIndex || entry.isIndex
 			pages.push(entry)
 		}
@@ -529,15 +548,22 @@ const buildIndexFallback = (pages, siteName) => {
 	return lines.join('\n')
 }
 
-const resolveRootPath = (routePath, pagesByRoute, pagesByRouteIndex = null) => {
+const resolveRootPath = (routePath, pagesByRoute) => {
 	const normalized = normalizeRoutePath(routePath || '/')
 	const segments = normalized.split('/').filter(Boolean)
-	const lookup = pagesByRouteIndex || pagesByRoute
 	for (let i = segments.length; i >= 1; i--) {
 		const candidate = `/${segments.slice(0, i).join('/')}`
-		const page = lookup.get(candidate)
+		const page = pagesByRoute.get(candidate)
 		if (page?.isIndex && page?.isRoot) {
-			return candidate
+			return page.routePath
+		}
+		const isExact = normalized === candidate
+		if (!isExact) {
+			const indexCandidate = candidate === '/' ? '/' : `${candidate}/`
+			const indexPage = pagesByRoute.get(indexCandidate)
+			if (indexPage?.isIndex && indexPage?.isRoot) {
+				return indexPage.routePath
+			}
 		}
 	}
 	return '/'
@@ -547,7 +573,7 @@ const buildNavSequence = (nodes, pagesByRoute) => {
 	const result = []
 	const seen = new Set()
 	const addEntry = (entry) => {
-		if (!entry?.routePath) return
+		if (!entry.routePath) return
 		const key = entry.filePath || entry.routePath
 		if (seen.has(key)) return
 		seen.add(key)
@@ -587,54 +613,42 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 	const hasIndex = pages.some((page) => page.routePath === '/')
 	if (!hasIndex) {
 		const content = buildIndexFallback(pages, state.SITE_NAME)
-		pages = [
-			{
-				routePath: '/',
-				routeHref: '/',
-				filePath: resolve(state.PAGES_DIR, 'index.md'),
-				relativePath: 'index.md',
-				name: 'index',
-				dir: '',
-				segments: [],
-				depth: 0,
-				isIndex: true,
-				isInternal: false,
-				title: state.SITE_NAME || 'Methanol Site',
-				weight: null,
-				date: null,
-				isRoot: false,
-				hidden: false,
-				content,
-				frontmatter: {},
-				matter: null,
-				stats: { size: content.length, createdAt: null, updatedAt: null },
-				createdAt: null,
-				updatedAt: null
-			},
-			...pages
-		]
+		pages.unshift({
+			routePath: '/',
+			routeHref: withBase('/'),
+			filePath: resolve(state.PAGES_DIR, 'index.md'),
+			relativePath: 'index.md',
+			name: 'index',
+			dir: '',
+			segments: [],
+			depth: 0,
+			isIndex: true,
+			isInternal: false,
+			title: state.SITE_NAME || 'Methanol Site',
+			weight: null,
+			date: null,
+			isRoot: false,
+			hidden: false,
+			content,
+			frontmatter: {},
+			matter: null,
+			stats: { size: content.length, createdAt: null, updatedAt: null },
+			createdAt: null,
+			updatedAt: null
+		})
 		if (excludedRoutes?.has('/')) {
 			excludedRoutes.delete('/')
 		}
 	}
 
 	const pagesByRoute = new Map()
-	const pagesByRouteIndex = new Map()
 	for (const page of pages) {
-		if (page.isIndex) {
-			pagesByRouteIndex.set(page.routePath, page)
-			if (!pagesByRoute.has(page.routePath)) {
-				pagesByRoute.set(page.routePath, page)
-			}
-			continue
-		}
-		const existing = pagesByRoute.get(page.routePath)
-		if (!existing || existing.isIndex) {
+		if (!pagesByRoute.has(page.routePath)) {
 			pagesByRoute.set(page.routePath, page)
 		}
 	}
 	const getPageByRoute = (routePath, options = {}) => {
-		const { filePath, preferIndex } = options || {}
+		const { filePath } = options || {}
 		if (filePath) {
 			for (const page of pages) {
 				if (page.routePath === routePath && page.filePath === filePath) {
@@ -642,18 +656,12 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 				}
 			}
 		}
-		if (preferIndex === true) {
-			return pagesByRouteIndex.get(routePath) || pagesByRoute.get(routePath) || null
-		}
-		if (preferIndex === false) {
-			return pagesByRoute.get(routePath) || pagesByRouteIndex.get(routePath) || null
-		}
-		return pagesByRoute.get(routePath) || pagesByRouteIndex.get(routePath) || null
+		return pagesByRoute.get(routePath) || null
 	}
 	const pagesTreeCache = new Map()
 	const navSequenceCache = new Map()
 	const getPagesTree = (routePath) => {
-		const rootPath = resolveRootPath(routePath, pagesByRoute, pagesByRouteIndex)
+		const rootPath = resolveRootPath(routePath, pagesByRoute)
 		const normalizedRoute = normalizeRoutePath(routePath || '/')
 		const cacheKey = `${rootPath}::${normalizedRoute}`
 		if (pagesTreeCache.has(cacheKey)) {
@@ -668,7 +676,7 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		return tree
 	}
 	const getNavSequence = (routePath) => {
-		const rootPath = resolveRootPath(routePath, pagesByRoute, pagesByRouteIndex)
+		const rootPath = resolveRootPath(routePath, pagesByRoute)
 		const normalizedRoute = normalizeRoutePath(routePath || '/')
 		const cacheKey = `${rootPath}::${normalizedRoute}`
 		if (navSequenceCache.has(cacheKey)) {
@@ -683,8 +691,10 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 	const notFound = pagesByRoute.get('/404') || null
 	const languages = collectLanguagesFromPages(pages)
 	const userSite = state.USER_SITE || {}
+	const siteBase = state.VITE_BASE ?? userSite.base ?? null
 	const site = {
 		...userSite,
+		base: siteBase,
 		name: state.SITE_NAME,
 		root: state.ROOT_DIR,
 		pagesDir: state.PAGES_DIR,
@@ -703,7 +713,6 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 	const pagesContext = {
 		pages,
 		pagesByRoute,
-		pagesByRouteIndex,
 		getPageByRoute,
 		pagesTree,
 		getPagesTree,
@@ -737,7 +746,7 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 				if (!entry) return null
 				return {
 					routePath: entry.routePath,
-					routeHref: entry.routeHref || entry.routePath,
+					routeHref: entry.routeHref,
 					title: entry.title || entry.name || entry.routePath,
 					filePath: entry.filePath || null
 				}

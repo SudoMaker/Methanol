@@ -28,8 +28,8 @@ import { methanolPreviewRoutingPlugin } from './vite-plugins.js'
 export const runVitePreview = async () => {
 	const baseConfig = {
 		configFile: false,
+		appType: 'mpa',
 		root: state.PAGES_DIR,
-		base: '/',
 		build: {
 			outDir: state.DIST_DIR
 		}

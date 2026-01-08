@@ -20,7 +20,13 @@
 
 import { signal, $, t, If, For, onCondition } from 'refui'
 import { createPortal } from 'refui/extras'
-import { loadPagefind } from '/.methanol_virtual_module/pagefind.js'
+
+let pagefindModule = null
+const loadPagefindModule = async () => {
+	if (pagefindModule) return pagefindModule
+	pagefindModule = import('methanol:pagefind-loader')
+	return pagefindModule
+}
 
 let keybindReady = false
 let cachedPagefind = null
@@ -35,7 +41,8 @@ const resolveShortcutLabel = () => {
 
 const ensurePagefind = async (options) => {
 	if (cachedPagefind) return cachedPagefind
-	const pagefind = await loadPagefind()
+	const module = await loadPagefindModule()
+	const pagefind = await module?.loadPagefind?.()
 	if (!pagefind) return null
 	if (pagefind.options) {
 		const nextOptions = { excerptLength: 30, ...(options || {}) }

@@ -27,6 +27,7 @@ import { cli, state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
 import { rewindEnv } from './components.js'
 import { env as createEnv } from './rewind.js'
+import { cached, cachedStr } from './utils.js'
 import defaultTheme from '../themes/default/index.js'
 
 const CONFIG_FILENAMES = [
@@ -77,6 +78,52 @@ const resolveThemePublicDir = (root, value) => {
 	if (value == null) return null
 	if (value === false) return false
 	return isAbsolute(value) ? value : resolve(root, value)
+}
+
+let devBaseWarningShown = false
+
+const normalizeSiteBase = (value) => {
+	if (value == null) return null
+	if (typeof value !== 'string') return null
+	const trimmed = value.trim()
+	if (!trimmed || trimmed === './') return '/'
+	if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+		return trimmed
+	}
+	let base = trimmed
+	if (!base.startsWith('/')) {
+		base = `/${base}`
+	}
+	if (!base.endsWith('/')) {
+		base = `${base}/`
+	}
+	return base
+}
+
+const normalizeViteBase = (value) => {
+	if (!value || value === '/' || value === './') return '/'
+	if (typeof value !== 'string') return '/'
+	let base = value.trim()
+	if (!base || base === './') return '/'
+	if (base.startsWith('http://') || base.startsWith('https://')) {
+		try {
+			base = new URL(base).pathname
+		} catch {
+			return '/'
+		}
+	}
+	if (!base.startsWith('/')) return '/'
+	if (!base.endsWith('/')) {
+		base = `${base}/`
+	}
+	return base
+}
+
+const warnDevBase = (value) => {
+	if (devBaseWarningShown) return
+	devBaseWarningShown = true
+	const label = value ? ` (received "${value}")` : ''
+	console.warn(`Methanol: \`base\`${label} is disabled in dev mode due to module resolution inconsistencies in Vite. Using "/".\n`)
 }
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key)
@@ -216,11 +263,20 @@ export const applyConfig = async (config, mode) => {
 	state.ROOT_DIR = root
 	const configSiteName = cli.CLI_SITE_NAME ?? config.site?.name ?? null
 	state.SITE_NAME = configSiteName || basename(root) || 'Methanol Site'
-	state.USER_SITE = config.site && typeof config.site === 'object' ? { ...config.site } : null
+	const userSite = config.site && typeof config.site === 'object' ? { ...config.site } : null
+	const siteBase = normalizeSiteBase(userSite?.base)
+	state.SITE_BASE = siteBase
+	if (userSite) {
+		if (siteBase == null) {
+			delete userSite.base
+		} else {
+			userSite.base = siteBase
+		}
+	}
+	state.USER_SITE = userSite
 	if (mode) {
 		state.CURRENT_MODE = mode
 	}
-	// config.paths / config.dirs are intentionally ignored (deprecated)
 
 	const pagesDirValue = cli.CLI_PAGES_DIR || config.pagesDir
 	const componentsDirValue = cli.CLI_COMPONENTS_DIR || config.componentsDir
@@ -409,14 +465,76 @@ export const resolveUserViteConfig = async (command) => {
 	}
 	const themeConfig = await resolveConfig(state.USER_THEME.vite)
 	const userConfig = await resolveConfig(state.USER_VITE_CONFIG)
+	const userHasBase = userConfig && hasOwn(userConfig, 'base')
 	if (!themeConfig && !userConfig) {
-		state.RESOLVED_VITE_CONFIG = null
-		return null
+		if (state.SITE_BASE) {
+			state.RESOLVED_VITE_CONFIG = { base: state.SITE_BASE }
+		} else {
+			state.RESOLVED_VITE_CONFIG = null
+		}
+		state.VITE_BASE = normalizeViteBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '/')
+		if (command === 'serve') {
+			if (state.VITE_BASE !== '/' || (state.SITE_BASE && state.SITE_BASE !== '/')) {
+				warnDevBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '')
+			}
+			if (state.RESOLVED_VITE_CONFIG) {
+				state.RESOLVED_VITE_CONFIG.base = '/'
+			}
+			state.VITE_BASE = '/'
+		}
+		return state.RESOLVED_VITE_CONFIG
 	}
 	state.RESOLVED_VITE_CONFIG = themeConfig
 		? userConfig
 			? mergeConfig(themeConfig, userConfig)
 			: themeConfig
 		: userConfig
+	if (state.SITE_BASE && !userHasBase) {
+		state.RESOLVED_VITE_CONFIG.base = state.SITE_BASE
+	}
+	state.VITE_BASE = normalizeViteBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '/')
+	if (command === 'serve') {
+		if (state.VITE_BASE !== '/' || (state.SITE_BASE && state.SITE_BASE !== '/')) {
+			warnDevBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '')
+		}
+		state.RESOLVED_VITE_CONFIG.base = '/'
+		state.VITE_BASE = '/'
+	}
 	return state.RESOLVED_VITE_CONFIG
 }
+
+export const resolveBasePrefix = cached(() => {
+	const value = state.VITE_BASE || state.SITE_BASE || '/'
+	if (!value || value === '/' || value === './') return ''
+	if (typeof value !== 'string') return ''
+	let base = value.trim()
+	if (!base || base === '/' || base === './') return ''
+	if (base.startsWith('http://') || base.startsWith('https://')) {
+		try {
+			base = new URL(base).pathname
+		} catch {
+			return ''
+		}
+	}
+	if (!base.startsWith('/')) return ''
+	if (base.endsWith('/')) base = base.slice(0, -1)
+	return base
+})
+
+export const withBase = cachedStr((value) => {
+	if (!value || typeof value !== 'string') return value
+	if (
+		value.startsWith('http://') ||
+		value.startsWith('https://') ||
+		value.startsWith('//') ||
+		value.startsWith('data:') ||
+		value.startsWith('mailto:') ||
+		value.startsWith('#')
+	) {
+		return value
+	}
+	if (!value.startsWith('/')) return value
+	const prefix = resolveBasePrefix()
+	if (!prefix || value.startsWith(`${prefix}/`)) return value
+	return `${prefix}${value}`
+})

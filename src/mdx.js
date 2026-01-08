@@ -32,12 +32,13 @@ import { pathToFileURL } from 'url'
 import { existsSync } from 'fs'
 import { resolve, dirname, basename, relative } from 'path'
 import { state } from './state.js'
-import { resolveUserMdxConfig } from './config.js'
+import { resolveUserMdxConfig, withBase } from './config.js'
 import { methanolCtx } from './rehype-plugins/methanol-ctx.js'
 import { linkResolve } from './rehype-plugins/link-resolve.js'
 
 // Workaround for Vite: it doesn't support resolving module/virtual modules in script src in dev mode
-const RWND_INJECT = HTMLRenderer.rawHTML`<script type="module" src="/.methanol_virtual_module/inject.js"></script>`
+const resolveRewindInject = () =>
+	HTMLRenderer.rawHTML(`<script type="module" src="${withBase('/.methanol_virtual_module/inject.js')}"></script>`)
 const RWND_FALLBACK = HTMLRenderer.rawHTML`<script>
 	if (!window.$$rwnd) {
 		const l = []
@@ -59,12 +60,12 @@ const resolveUserHeadAssets = () => {
 	const pagesDir = state.PAGES_DIR
 	if (!pagesDir) return assets
 	if (existsSync(resolve(pagesDir, 'style.css'))) {
-		assets.push(HTMLRenderer.c('link', { rel: 'stylesheet', href: '/style.css' }))
+		assets.push(HTMLRenderer.c('link', { rel: 'stylesheet', href: withBase('/style.css') }))
 	}
 	if (existsSync(resolve(pagesDir, 'index.js'))) {
-		assets.push(HTMLRenderer.c('script', { type: 'module', src: '/index.js' }))
+		assets.push(HTMLRenderer.c('script', { type: 'module', src: withBase('/index.js') }))
 	} else if (existsSync(resolve(pagesDir, 'index.ts'))) {
-		assets.push(HTMLRenderer.c('script', { type: 'module', src: '/index.ts' }))
+		assets.push(HTMLRenderer.c('script', { type: 'module', src: withBase('/index.ts') }))
 	}
 	if (state.CURRENT_MODE === 'production') {
 		cachedHeadAssets = assets
@@ -73,17 +74,17 @@ const resolveUserHeadAssets = () => {
 }
 
 const resolvePageAssetUrl = (page, filePath) => {
-	const root = page?.source === 'theme' && state.THEME_PAGES_DIR
+	const root = page.source === 'theme' && state.THEME_PAGES_DIR
 		? state.THEME_PAGES_DIR
 		: state.PAGES_DIR
 	if (!root) return null
 	const relPath = relative(root, filePath).replace(/\\/g, '/')
 	if (!relPath || relPath.startsWith('..')) return null
-	return `/${relPath}`
+	return withBase(`/${relPath}`)
 }
 
 const resolvePageHeadAssets = (page) => {
-	if (!page?.filePath) return []
+	if (!page.filePath) return []
 	const baseDir = dirname(page.filePath)
 	const baseName = basename(page.filePath).replace(/\.(mdx|md)$/, '')
 	const pagesRoot = state.PAGES_DIR ? resolve(state.PAGES_DIR) : null
@@ -138,26 +139,28 @@ export const buildPageContext = ({
 	lazyPagesTree = false
 }) => {
 	const page = pageMeta
-	const language = pagesContext?.getLanguageForRoute ? pagesContext.getLanguageForRoute(routePath) : null
-	const getSiblings = pagesContext?.getSiblings
-		? () => pagesContext.getSiblings(routePath, page?.filePath || filePath)
+	const language = pagesContext.getLanguageForRoute ? pagesContext.getLanguageForRoute(routePath) : null
+	const getSiblings = pagesContext.getSiblings
+		? () => pagesContext.getSiblings(routePath, page.filePath || filePath)
 		: null
 	if (page && getSiblings && page.getSiblings !== getSiblings) {
 		page.getSiblings = getSiblings
 	}
 	const ctx = {
 		routePath,
+		routeHref: withBase(routePath),
 		filePath,
 		page,
-		pages: pagesContext?.pages || [],
-		pagesByRoute: pagesContext?.pagesByRoute || new Map(),
-		languages: pagesContext?.languages || [],
+		pages: pagesContext.pages || [],
+		pagesByRoute: pagesContext.pagesByRoute || new Map(),
+		languages: pagesContext.languages || [],
 		language,
-		site: pagesContext?.site || null,
-		getSiblings
+		site: pagesContext.site || null,
+		getSiblings,
+		withBase
 	}
 	const resolvePagesTree = () =>
-		pagesContext?.getPagesTree ? pagesContext.getPagesTree(routePath) : pagesContext?.pagesTree || []
+		pagesContext.getPagesTree ? pagesContext.getPagesTree(routePath) : pagesContext.pagesTree || []
 	if (lazyPagesTree) {
 		let cachedTree = null
 		let hasTree = false
@@ -286,7 +289,7 @@ const resolveMdxConfigForPage = async (frontmatter) => {
 }
 
 export const compileMdx = async ({ content, filePath, ctx }) => {
-	const mdxConfig = await resolveMdxConfigForPage(ctx?.page?.frontmatter)
+	const mdxConfig = await resolveMdxConfigForPage(ctx.page.frontmatter)
 	const runtimeFactory = mdxConfig.development ? JSXDevFactory : JSXFactory
 	const compiled = await compile({ value: content, path: filePath }, mdxConfig)
 
@@ -322,15 +325,15 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 		const nextTitle = findTitleFromToc(page.toc) || page.title
 		if (nextTitle !== page.title) {
 			page.title = nextTitle
-			if (typeof pagesContext?.refreshPagesTree === 'function') {
+			if (typeof pagesContext.refreshPagesTree === 'function') {
 				pagesContext.refreshPagesTree()
 			}
 		}
 	}
-	if (typeof pagesContext?.setDerivedTitle === 'function') {
+	if (typeof pagesContext.setDerivedTitle === 'function') {
 		pagesContext.setDerivedTitle(page.filePath, shouldUseTocTitle ? page.title : null, page.toc)
 	}
-	if (ctx && refreshPagesTree && pagesContext?.getPagesTree) {
+	if (ctx && refreshPagesTree && pagesContext.getPagesTree) {
 		ctx.pagesTree = pagesContext.getPagesTree(activeCtx.routePath)
 	}
 }
@@ -340,14 +343,8 @@ export const renderHtml = async ({
 	filePath,
 	components,
 	pagesContext,
-	pageMeta: explicitPageMeta = null
+	pageMeta
 }) => {
-	const pageMeta =
-		explicitPageMeta ||
-		(pagesContext.getPageByRoute
-			? pagesContext.getPageByRoute(routePath, { filePath })
-			: pagesContext.pagesByRoute.get(routePath))
-
 	const ctx = buildPageContext({
 		routePath,
 		filePath,
@@ -359,7 +356,7 @@ export const renderHtml = async ({
 	const [Head, Outlet] = createPortal()
 	const ExtraHead = () => {
 		return [
-			RWND_INJECT,
+			resolveRewindInject(),
 			...resolveUserHeadAssets(),
 			...resolvePageHeadAssets(pageMeta),
 			Outlet(),
@@ -367,9 +364,9 @@ export const renderHtml = async ({
 		]
 	}
 
-	const mdxComponent = pageMeta?.mdxComponent
+	const mdxComponent = pageMeta.mdxComponent
 
-	const Page = ({ components: extraComponents, ...props }, ...children) =>
+	const PageContent = ({ components: extraComponents, ...props }, ...children) =>
 		mdxComponent({
 			children,
 			...props,
@@ -394,7 +391,9 @@ export const renderHtml = async ({
 			() =>
 				template({
 					ctx,
-					Page,
+					page: ctx.page,
+					withBase,
+					PageContent,
 					ExtraHead,
 					HTMLRenderer,
 					components

@@ -27,7 +27,6 @@ import { state } from '../state.js'
 const extensionRegex = /\.(mdx?|html)$/i
 
 const isRelativeHref = (href) => {
-	if (typeof href !== 'string') return false
 	if (!href) return false
 	if (href.startsWith('#') || href.startsWith('?') || href.startsWith('/')) return false
 	if (href.startsWith('//')) return false

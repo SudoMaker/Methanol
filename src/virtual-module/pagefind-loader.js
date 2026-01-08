@@ -22,6 +22,27 @@ let pagefindInit = null
 let pagefindUiInit = null
 let pagefindUiReady = false
 
+const resolveBasePrefix = () => {
+	let base = import.meta.env?.BASE_URL || '/'
+	if (!base || base === '/' || base === './') return ''
+	if (base.startsWith('http://') || base.startsWith('https://')) {
+		try {
+			base = new URL(base).pathname
+		} catch {
+			return ''
+		}
+	}
+	if (!base.startsWith('/')) return ''
+	if (base.endsWith('/')) base = base.slice(0, -1)
+	return base
+}
+
+const withBase = (path) => {
+	const prefix = resolveBasePrefix()
+	if (!prefix || path.startsWith(`${prefix}/`)) return path
+	return `${prefix}${path}`
+}
+
 const dynamicImport = (path) => {
 	try {
 		const importer = new Function('p', 'return import(p)')
@@ -38,7 +59,7 @@ export const loadPagefind = async () => {
 			resolve(null)
 			return
 		}
-		dynamicImport('/pagefind/pagefind.js')
+		dynamicImport(withBase('/pagefind/pagefind.js'))
 			.then((mod) => {
 				if (!mod) return resolve(null)
 				if (mod.search) return resolve(mod)
@@ -89,7 +110,7 @@ export const loadPagefindUI = async (options = {}) => {
 			return
 		}
 		const script = document.createElement('script')
-		script.src = '/pagefind/pagefind-ui.js'
+		script.src = withBase('/pagefind/pagefind-ui.js')
 		script.async = true
 		script.onload = () => done(initPagefindUI(options))
 		script.onerror = () => done(false)

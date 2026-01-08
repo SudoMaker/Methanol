@@ -44,6 +44,11 @@ export default () => ({
 	// optional: code highlighting (Starry Night)
 	starryNight: false,
 
+	// optional: site metadata
+	site: {
+		base: '/docs/'
+	},
+
 	// optional: theme sources
 	theme: {
 		sources: {

@@ -32,7 +32,7 @@ const printBanner = async () => {
 		const pkgUrl = new URL('../package.json', import.meta.url)
 		const raw = await readFile(pkgUrl, 'utf-8')
 		const pkg = JSON.parse(raw)
-		const version = pkg?.version ? `v${pkg.version}` : ''
+		const version = `v${pkg.version}`
 		const isTty = Boolean(process.stdout && process.stdout.isTTY)
 		const label = `Methanol ${version}`.trim()
 		if (isTty) {
@@ -63,6 +63,7 @@ const main = async () => {
 	const config = await loadUserConfig(mode, cli.CLI_CONFIG_PATH)
 	await applyConfig(config, mode)
 	const userSite = state.USER_SITE || {}
+	const siteBase = state.VITE_BASE ?? userSite.base ?? null
 	const hookContext = {
 		mode,
 		root: state.ROOT_DIR,
@@ -73,6 +74,7 @@ const main = async () => {
 		HTMLRenderer,
 		site: {
 			...userSite,
+			base: siteBase,
 			name: state.SITE_NAME,
 			root: state.ROOT_DIR,
 			pagesDir: state.PAGES_DIR,
