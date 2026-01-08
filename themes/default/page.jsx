@@ -72,22 +72,22 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	const pagesByRoute = ctx.pagesByRoute
 	const pages = ctx.pages || []
 	const pagesTree = ctx.pagesTree || []
-	const siteName = ctx.site?.name || 'Methanol Site'
-	const title = page?.title || siteName
-	const currentRoute = page?.routeHref || page?.routePath || ''
-	const baseHref = page?.routePath === '/404' ? ctx.site?.base || '/' : null
-	const toc = page?.toc?.length ? renderToc(page.toc) : null
+	const siteName = ctx.site.name || 'Methanol Site'
+	const title = page.title || siteName
+	const currentRoute = page.routeHref || page.routePath || ''
+	const baseHref = page.routePath === '/404' ? ctx.site.base || '/' : null
+	const toc = page.toc?.length ? renderToc(page.toc) : null
 	const hasToc = Boolean(toc)
 	const layoutClass = hasToc ? 'layout-container' : 'layout-container no-toc'
 	const tree = renderPageTree(pagesTree, currentRoute, 0)
 	const { ThemeSearchBox, ThemeColorSwitch, ThemeAccentSwitch, ThemeToCContainer } = components
-	const rootPage = pagesByRoute?.get?.('/') || pages.find((entry) => entry.routePath === '/')
-	const pageFrontmatter = page?.frontmatter || {}
-	const rootFrontmatter = rootPage?.frontmatter || {}
+	const rootPage = pagesByRoute.get('/') || pages.find((entry) => entry.routePath === '/')
+	const pageFrontmatter = page.frontmatter || {}
+	const rootFrontmatter = rootPage.frontmatter || {}
 	const themeLogo = '/logo.png'
 	const themeFavIcon = '/favicon.png'
-	const logo = pageFrontmatter.logo ?? rootFrontmatter.logo ?? ctx.site?.logo ?? themeLogo
-	const favicon = pageFrontmatter.favicon ?? rootFrontmatter.favicon ?? ctx.site?.favicon ?? themeFavIcon
+	const logo = pageFrontmatter.logo ?? rootFrontmatter.logo ?? ctx.site.logo ?? themeLogo
+	const favicon = pageFrontmatter.favicon ?? rootFrontmatter.favicon ?? ctx.site.favicon ?? themeFavIcon
 	const excerpt = pageFrontmatter.excerpt ?? `${title} | ${siteName} - Powered by Methanol`
 	const _ogTitle = pageFrontmatter.ogTitle ?? title ?? null
 	const ogTitle = _ogTitle ? `${_ogTitle} | ${siteName}` : null
@@ -98,15 +98,18 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 	const twitterDescription = pageFrontmatter.twitterDescription ?? ogDescription ?? excerpt
 	const twitterImage = pageFrontmatter.twitterImage ?? ogImage
 	const twitterCard = pageFrontmatter.twitterCard ?? (twitterImage ? 'summary_large_image' : null)
-	const siblings = typeof page?.getSiblings === 'function' ? page.getSiblings() : null
+	const siblings = page.getSiblings()
 	const prevPage = siblings?.prev || null
 	const nextPage = siblings?.next || null
 	const languages = Array.isArray(ctx.languages) ? ctx.languages : []
 	const currentLanguageHref = ctx.language?.href || ctx.language?.routePath || null
 	const languageCode = pageFrontmatter.langCode ?? rootFrontmatter.langCode ?? ctx.language?.code ?? 'en'
 	const htmlLang = typeof languageCode === 'string' && languageCode.trim() ? languageCode : 'en'
-	const pagefindEnabled = ctx.site?.pagefind?.enabled !== false
-	const pagefindOptions = ctx.site?.pagefind?.options || null
+	const pagefindEnabled = ctx.site.pagefind?.enabled !== false
+	const pagefindOptions = ctx.site.pagefind?.options || null
+	const repoBase = ctx.site.repoBase
+	const sourceUrl = pageFrontmatter.sourceURL
+	const editUrl = sourceUrl || (repoBase && page.relativePath ? new URL(page.relativePath, repoBase).href : null)
 	const languageSelector = languages.length ? (
 		<div class="lang-switch-wrapper">
 			<select
@@ -267,7 +270,22 @@ const PAGE_TEMPLATE = ({ Page, ExtraHead, components, ctx }) => {
 							) : null}
 							{page ? (
 								<footer class="page-meta">
-									<div class="page-meta-item">Updated: {page.updatedAt || '-'}</div>
+									<div class="page-meta-item">
+										{editUrl ? (
+											<>
+												<a
+													href={editUrl}
+													target="_blank"
+													rel="noopener noreferrer"
+													class="page-meta-link"
+												>
+													Edit this page
+												</a>
+												<span style="margin: 0 0.5rem; opacity: 0.5;">•</span>
+											</>
+										) : null}
+										Updated: {page.updatedAt || '-'}
+									</div>
 									<div class="page-meta-item">
 										Powered by{' '}
 										<a
