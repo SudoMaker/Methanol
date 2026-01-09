@@ -392,6 +392,9 @@ export const applyConfig = async (config, mode) => {
 	state.THEME_POST_BUILD_HOOKS = normalizeHooks(state.USER_THEME?.postBuild)
 	state.THEME_PRE_BUNDLE_HOOKS = normalizeHooks(state.USER_THEME?.preBundle)
 	state.THEME_POST_BUNDLE_HOOKS = normalizeHooks(state.USER_THEME?.postBundle)
+	if (hasOwn(config, 'gfm')) {
+		state.GFM_ENABLED = config.gfm !== false
+	}
 	const starryNight = resolveStarryNightConfig(config.starryNight)
 	const cliCodeHighlighting = cli.CLI_CODE_HIGHLIGHTING
 	if (cliCodeHighlighting != null) {

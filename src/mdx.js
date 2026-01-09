@@ -25,6 +25,7 @@ import rehypeSlug from 'rehype-slug'
 import extractToc from '@stefanprobst/rehype-extract-toc'
 import withTocExport from '@stefanprobst/rehype-extract-toc/mdx'
 import rehypeStarryNight from 'rehype-starry-night'
+import remarkGfm from 'remark-gfm'
 import { HTMLRenderer } from './renderer.js'
 import { signal, computed, read, Suspense, nextTick } from 'refui'
 import { createPortal } from 'refui/extras'
@@ -260,11 +261,21 @@ const resolveBaseMdxConfig = async () => {
 		jsxImportSource: 'refui',
 		development: state.CURRENT_MODE !== 'production',
 		elementAttributeNameCase: 'html',
-		rehypePlugins: [rehypeSlug, extractToc, [withTocExport, { name: 'toc' }]]
+		rehypePlugins: [rehypeSlug, extractToc, [withTocExport, { name: 'toc' }]],
+		remarkPlugins: []
 	}
+
+	if (state.GFM_ENABLED) {
+		baseMdxConfig.remarkPlugins.push(remarkGfm)
+	}
+
 	const mdxConfig = { ...baseMdxConfig, ...userMdxConfig }
 	const userRehypePlugins = Array.isArray(userMdxConfig.rehypePlugins) ? userMdxConfig.rehypePlugins : []
 	mdxConfig.rehypePlugins = [...baseMdxConfig.rehypePlugins, ...userRehypePlugins]
+
+	const userRemarkPlugins = Array.isArray(userMdxConfig.remarkPlugins) ? userMdxConfig.remarkPlugins : []
+	mdxConfig.remarkPlugins = [...baseMdxConfig.remarkPlugins, ...userRemarkPlugins]
+
 	mdxConfig.rehypePlugins.push(linkResolve)
 	mdxConfig.rehypePlugins.push(methanolCtx)
 	return (cachedMdxConfig = mdxConfig)

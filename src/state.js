@@ -180,6 +180,7 @@ export const state = {
 	THEME_POST_BUNDLE_HOOKS: [],
 	STARRY_NIGHT_ENABLED: false,
 	STARRY_NIGHT_OPTIONS: null,
+	GFM_ENABLED: true,
 	CURRENT_MODE: 'production',
 	RESOLVED_MDX_CONFIG: undefined,
 	RESOLVED_VITE_CONFIG: undefined
