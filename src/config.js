@@ -24,6 +24,7 @@ import { resolve, isAbsolute, extname, basename } from 'path'
 import { pathToFileURL } from 'url'
 import { mergeConfig } from 'vite'
 import { cli, state } from './state.js'
+import { logger } from './logger.js'
 import { HTMLRenderer } from './renderer.js'
 import { rewindEnv } from './components.js'
 import { env as createEnv } from './rewind.js'
@@ -123,7 +124,7 @@ const warnDevBase = (value) => {
 	if (devBaseWarningShown) return
 	devBaseWarningShown = true
 	const label = value ? ` (received "${value}")` : ''
-	console.warn(`Methanol: \`base\`${label} is disabled in dev mode due to module resolution inconsistencies in Vite. Using "/".\n`)
+	logger.warn(`Methanol: \`base\`${label} is disabled in dev mode due to module resolution inconsistencies in Vite. Using "/".\n`)
 }
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key)

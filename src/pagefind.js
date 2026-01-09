@@ -24,6 +24,7 @@ import { join, delimiter } from 'path'
 import { spawn } from 'child_process'
 import { state, cli } from './state.js'
 import { createStageLogger } from './stage-logger.js'
+import { logger } from './logger.js'
 
 const resolvePagefindBin = async () => {
 	const binName = process.platform === 'win32' ? 'pagefind.cmd' : 'pagefind'
@@ -93,7 +94,7 @@ const runCommand = (command, args, options) =>
 export const runPagefind = async () => {
 	const bin = await resolvePagefindBin()
 	if (!bin) {
-		console.log('Pagefind not found; skipping search indexing.')
+		logger.warn('Pagefind not found; skipping search indexing.')
 		return false
 	}
 	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
@@ -101,7 +102,7 @@ export const runPagefind = async () => {
 	const token = stageLogger.start('Indexing search')
 
 	if (cli.CLI_VERBOSE) {
-		console.log('Running Pagefind search indexing...')
+		logger.info('Running Pagefind search indexing...')
 	}
 
 	const extraArgs = buildArgsFromOptions(state.PAGEFIND_BUILD)
@@ -110,7 +111,7 @@ export const runPagefind = async () => {
 		stdio: cli.CLI_VERBOSE ? 'inherit' : 'ignore'
 	})
 	if (!ok) {
-		console.warn('Pagefind failed to build search index.')
+		logger.warn('Pagefind failed to build search index.')
 	}
 	stageLogger.end(token)
 	return ok

@@ -18,6 +18,8 @@
  * under the License.
  */
 
+import { style } from './logger.js'
+
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
 
 export const createStageLogger = (enabled) => {
@@ -43,17 +45,18 @@ export const createStageLogger = (enabled) => {
 	}
 	const start = (label) => {
 		if (!enabled) return null
-		writeLine(`${label}...`, false)
+		writeLine(`${style.cyan('◼')}  ${label}...`, false)
 		return { label, start: now() }
 	}
 	const update = (token, message) => {
 		if (!enabled || !token || !message) return
-		writeLine(message, false)
+		writeLine(`${style.cyan('◼')}  ${message}`, false)
 	}
 	const end = (token) => {
 		if (!enabled || !token) return
-		const duration = Math.round(now() - token.start)
-		writeLine(`${token.label}...\t${duration}ms`, true)
+		const duration = now() - token.start
+		const timeString = duration > 1000 ? `${(duration / 1000).toFixed(2)}s` : `${Math.round(duration)}ms`
+		writeLine(`${style.green('✔')}  ${token.label}\t${style.dim(timeString)}`, true)
 	}
 	return { start, update, end }
 }

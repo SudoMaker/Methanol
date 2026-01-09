@@ -26,6 +26,7 @@ import { runVitePreview } from './preview-server.js'
 import { cli, state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
 import { readFile } from 'fs/promises'
+import { style, logger } from './logger.js'
 
 const printBanner = async () => {
 	try {
@@ -131,7 +132,10 @@ const main = async () => {
 		await runHooks(state.THEME_POST_BUILD_HOOKS, buildContext)
 		await runHooks(state.USER_POST_BUILD_HOOKS, buildContext)
 		const endTime = performance.now()
-		console.log(`\nBuild completed in ${Math.round(endTime - startTime)}ms.`)
+		const duration = endTime - startTime
+		const timeString = duration > 1000 ? `${(duration / 1000).toFixed(2)}s` : `${Math.round(duration)}ms`
+		console.log()
+		logger.success(`Build completed in ${style.bold(timeString)}.`)
 		return
 	}
 	cli.showHelp()
