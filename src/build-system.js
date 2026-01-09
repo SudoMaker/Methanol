@@ -67,7 +67,7 @@ export const buildHtmlEntries = async () => {
 		await ensureDir(state.INTERMEDIATE_DIR)
 	}
 
-	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build'
+	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
 	const stageLogger = createStageLogger(logEnabled)
 	const themeComponentsDir = state.THEME_COMPONENTS_DIR
 	const themeEnv = state.THEME_ENV
@@ -164,6 +164,10 @@ export const buildHtmlEntries = async () => {
 }
 
 export const runViteBuild = async (entry, htmlCache) => {
+	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
+	const stageLogger = createStageLogger(logEnabled)
+	const token = stageLogger.start('Building bundle')
+
 	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
 		await preparePublicAssets({
 			themeDir: state.THEME_ASSETS_DIR,
@@ -177,6 +181,7 @@ export const runViteBuild = async (entry, htmlCache) => {
 		root: state.PAGES_DIR,
 		appType: 'mpa',
 		publicDir: state.STATIC_DIR === false ? false : state.STATIC_DIR,
+		logLevel: cli.CLI_VERBOSE ? 'info' : 'silent',
 		build: {
 			outDir: state.DIST_DIR,
 			emptyOutDir: true,
@@ -198,4 +203,5 @@ export const runViteBuild = async (entry, htmlCache) => {
 	const userConfig = await resolveUserViteConfig('build')
 	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
 	await viteBuild(finalConfig)
+	stageLogger.end(token)
 }

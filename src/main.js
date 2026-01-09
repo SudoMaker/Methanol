@@ -107,6 +107,7 @@ const main = async () => {
 		return
 	}
 	if (isBuild) {
+		const startTime = performance.now()
 		await runHooks(state.USER_PRE_BUILD_HOOKS)
 		await runHooks(state.THEME_PRE_BUILD_HOOKS)
 		const { entry, htmlCache, pagesContext } = await buildHtmlEntries()
@@ -129,6 +130,8 @@ const main = async () => {
 		}
 		await runHooks(state.THEME_POST_BUILD_HOOKS, buildContext)
 		await runHooks(state.USER_POST_BUILD_HOOKS, buildContext)
+		const endTime = performance.now()
+		console.log(`\nBuild completed in ${Math.round(endTime - startTime)}ms.`)
 		return
 	}
 	cli.showHelp()
