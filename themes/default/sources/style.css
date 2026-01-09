@@ -1747,3 +1747,151 @@ a {
 	view-transition-name: active-sidebar-bg;
 	contain: layout paint;
 }
+
+/* --- Print Styles --- */
+
+@media print {
+	:root {
+		--bg: #ffffff;
+		--surface: #ffffff;
+		--surface-muted: #f4f4f5;
+		--surface-elevated: #ffffff;
+		--text: #09090b;
+		--muted: #52525b;
+		--border: #e4e4e7;
+		--accent: #000000;
+		--accent-soft: #f4f4f5;
+		--hover-bg: transparent;
+	}
+
+	body {
+		background-color: white !important;
+		background-image: none !important;
+		color: black !important;
+		width: 100% !important;
+		margin: 0 !important;
+		padding: 0 !important;
+		overflow: visible !important;
+	}
+
+	/* Hide UI Elements */
+	.sidebar,
+	.toc-panel,
+	.nav-toggle-label,
+	.toc-toggle-label,
+	.search-toggle-label,
+	.search-modal,
+	.page-nav,
+	.copy-btn,
+	.heading-anchor,
+	.theme-switch-wrapper,
+	.lang-switch-wrapper,
+	.page-meta {
+		display: none !important;
+	}
+
+	/* Layout Overrides */
+	.layout-container,
+	.layout-container.no-toc {
+		display: block !important;
+		max-width: none !important;
+		width: 100% !important;
+		margin: 0 !important;
+		padding: 0 !important;
+	}
+
+	.main-content {
+		padding: 0 !important;
+		width: 100% !important;
+		max-width: none !important;
+	}
+
+	/* Typography & Content */
+	body {
+		font-size: 11pt !important;
+		line-height: 1.5 !important;
+	}
+
+	.main-content {
+		h1 {
+			font-size: 24pt !important;
+			margin-bottom: 1rem !important;
+		}
+
+		h2 {
+			font-size: 18pt !important;
+			margin-top: 1.5rem !important;
+			margin-bottom: 0.75rem !important;
+		}
+
+		h3 {
+			font-size: 14pt !important;
+			margin-top: 1.25rem !important;
+			margin-bottom: 0.5rem !important;
+		}
+
+		p, li {
+			font-size: 11pt !important;
+			margin-bottom: 0.75rem !important;
+		}
+
+		pre, code {
+			font-size: 10pt !important;
+		}
+	}
+
+	h1, h2, h3, h4, h5, h6 {
+		color: black !important;
+		page-break-after: avoid;
+		break-after: avoid;
+	}
+
+	h2 {
+		border-bottom: 1px solid #000 !important;
+	}
+
+	p, li {
+		orphans: 3;
+		widows: 3;
+	}
+
+	a {
+		text-decoration: underline !important;
+		color: black !important;
+	}
+
+	/* Expand external links */
+	a[href^="http"]::after {
+		content: " (" attr(href) ")";
+		font-size: 0.85em;
+		color: #555;
+	}
+
+	/* Clean up code blocks */
+	pre {
+		border: 1px solid #ccc !important;
+		white-space: pre-wrap !important;
+		break-inside: avoid;
+		background: #fafafa !important;
+	}
+
+	/* Blockquotes */
+	blockquote {
+		border-left: 3px solid #ccc !important;
+		background: transparent !important;
+		color: #333 !important;
+		break-inside: avoid;
+	}
+
+	/* Tables */
+	table {
+		break-inside: avoid;
+	}
+
+	/* Page Setup */
+	@page {
+		margin: 2cm;
+		size: auto;
+	}
+}
+
