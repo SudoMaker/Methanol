@@ -344,6 +344,8 @@ export const runViteDev = async () => {
 			} else {
 				return next()
 			}
+		} else if (requestedPath.endsWith('/index')) {
+			renderRoutePath = requestedPath.slice(0, -5) // remove last 'index'
 		}
 
 		try {
