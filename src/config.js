@@ -264,7 +264,7 @@ export const applyConfig = async (config, mode) => {
 	const configSiteName = cli.CLI_SITE_NAME ?? config.site?.name ?? null
 	state.SITE_NAME = configSiteName || basename(root) || 'Methanol Site'
 	const userSite = config.site && typeof config.site === 'object' ? { ...config.site } : null
-	const siteBase = normalizeSiteBase(userSite?.base)
+	const siteBase = normalizeSiteBase(cli.CLI_BASE || userSite?.base)
 	state.SITE_BASE = siteBase
 	if (userSite) {
 		if (siteBase == null) {
@@ -451,6 +451,7 @@ export const resolveUserViteConfig = async (command) => {
 	if (state.RESOLVED_VITE_CONFIG !== undefined) {
 		return state.RESOLVED_VITE_CONFIG
 	}
+
 	const resolveConfig = async (config) => {
 		if (!config) return null
 		if (typeof config === 'function') {
@@ -466,9 +467,10 @@ export const resolveUserViteConfig = async (command) => {
 		}
 		return config || null
 	}
+
 	const themeConfig = await resolveConfig(state.USER_THEME.vite)
 	const userConfig = await resolveConfig(state.USER_VITE_CONFIG)
-	const userHasBase = userConfig && hasOwn(userConfig, 'base')
+
 	if (!themeConfig && !userConfig) {
 		if (state.SITE_BASE) {
 			state.RESOLVED_VITE_CONFIG = { base: state.SITE_BASE }
@@ -487,15 +489,20 @@ export const resolveUserViteConfig = async (command) => {
 		}
 		return state.RESOLVED_VITE_CONFIG
 	}
+
 	state.RESOLVED_VITE_CONFIG = themeConfig
 		? userConfig
 			? mergeConfig(themeConfig, userConfig)
 			: themeConfig
 		: userConfig
-	if (state.SITE_BASE && !userHasBase) {
+
+	const userHasBase = userConfig && hasOwn(userConfig, 'base')
+	if (state.SITE_BASE && (cli.CLI_BASE || !userHasBase)) {
 		state.RESOLVED_VITE_CONFIG.base = state.SITE_BASE
 	}
+
 	state.VITE_BASE = normalizeViteBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '/')
+
 	if (command === 'serve') {
 		if (state.VITE_BASE !== '/' || (state.SITE_BASE && state.SITE_BASE !== '/')) {
 			warnDevBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '')
@@ -503,6 +510,7 @@ export const resolveUserViteConfig = async (command) => {
 		state.RESOLVED_VITE_CONFIG.base = '/'
 		state.VITE_BASE = '/'
 	}
+
 	return state.RESOLVED_VITE_CONFIG
 }
 

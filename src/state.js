@@ -103,10 +103,9 @@ const withCommonOptions = (y) =>
 		})
 		.option('code-highlighting', {
 			describe: 'Enable or disable code highlighting',
-			type: 'string',
+			type: 'boolean',
 			coerce: (value) => {
 				if (value == null) return null
-				if (value === true || value === '') return true
 				if (typeof value === 'boolean') return value
 				const normalized = String(value).trim().toLowerCase()
 				if (normalized === 'true') return true
@@ -119,6 +118,12 @@ const withCommonOptions = (y) =>
 			describe: 'Enable verbose output',
 			type: 'boolean',
 			default: false
+		})
+		.option('base', {
+			describe: 'Base URL override',
+			type: 'string',
+			requiresArg: true,
+			nargs: 1
 		})
 
 const parser = yargs(hideBin(process.argv))
@@ -148,7 +153,8 @@ export const cli = {
 	CLI_CONFIG_PATH: argv.config || null,
 	CLI_SITE_NAME: argv['site-name'] || null,
 	CLI_CODE_HIGHLIGHTING: typeof argv['code-highlighting'] === 'boolean' ? argv['code-highlighting'] : null,
-	CLI_VERBOSE: Boolean(argv.verbose)
+	CLI_VERBOSE: Boolean(argv.verbose),
+	CLI_BASE: argv.base || null
 }
 
 export const state = {
