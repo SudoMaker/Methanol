@@ -21,10 +21,14 @@
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
+import { cached } from '../utils.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-export const INJECT_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/inject.js'), 'utf-8')
-export const LOADER_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/loader.js'), 'utf-8')
-export const PAGEFIND_LOADER_SCRIPT = readFileSync(resolve(__dirname, './virtual-module/pagefind-loader.js'), 'utf-8')
+const readStatic = (filePath) => cached(() => readFileSync(resolve(__dirname, filePath), 'utf-8'))
+
+export const INJECT_SCRIPT = readStatic('./inject.js')
+export const LOADER_SCRIPT = readStatic('./loader.js')
+export const PAGEFIND_LOADER_SCRIPT = readStatic('./pagefind-loader.js')
+export const PWA_INJECT_SCRIPT = readStatic('./pwa-inject.js')

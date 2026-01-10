@@ -71,10 +71,14 @@ export const style = {
 	bgWhite: formatter('\x1b[47m', '\x1b[49m')
 }
 
+const log = console.log.bind(console)
+const warn = console.warn.bind(console)
+const error = console.error.bind(console)
+
 export const logger = {
-	info: (msg) => console.log(`${style.blue('ℹ')}  ${msg}`),
-	success: (msg) => console.log(`${style.green('✔')}  ${msg}`),
-	warn: (msg) => console.log(`${style.yellow('⚠')}  ${msg}`),
-	error: (msg) => console.log(`${style.red('✖')}  ${msg}`),
-	dim: (msg) => console.log(style.dim(msg))
+	info: (msg) => log(`${style.blue('ℹ')}  ${msg}`),
+	success: (msg) => log(`${style.green('✔')}  ${msg}`),
+	warn: (msg) => warn(`${style.yellow('⚠')}  ${msg}`),
+	error: (msg) => error(`${style.red('✖')}  ${msg}`),
+	dim: (msg) => log(style.dim(msg))
 }

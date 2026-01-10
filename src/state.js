@@ -125,6 +125,14 @@ const withCommonOptions = (y) =>
 			requiresArg: true,
 			nargs: 1
 		})
+		.option('search', {
+			describe: 'Enable search indexing (pagefind)',
+			type: 'boolean'
+		})
+		.option('pwa', {
+			describe: 'Enable PWA support',
+			type: 'boolean'
+		})
 
 const parser = yargs(hideBin(process.argv))
 	.scriptName('methanol')
@@ -154,7 +162,9 @@ export const cli = {
 	CLI_SITE_NAME: argv['site-name'] || null,
 	CLI_CODE_HIGHLIGHTING: typeof argv['code-highlighting'] === 'boolean' ? argv['code-highlighting'] : null,
 	CLI_VERBOSE: Boolean(argv.verbose),
-	CLI_BASE: argv.base || null
+	CLI_BASE: argv.base || null,
+	CLI_SEARCH: argv.search,
+	CLI_PWA: argv.pwa
 }
 
 export const state = {
@@ -183,6 +193,7 @@ export const state = {
 	PAGEFIND_ENABLED: false,
 	PAGEFIND_OPTIONS: null,
 	PAGEFIND_BUILD: null,
+	PWA_ENABLED: false,
 	USER_PRE_BUILD_HOOKS: [],
 	USER_POST_BUILD_HOOKS: [],
 	USER_PRE_BUNDLE_HOOKS: [],
@@ -194,6 +205,8 @@ export const state = {
 	STARRY_NIGHT_ENABLED: false,
 	STARRY_NIGHT_OPTIONS: null,
 	GFM_ENABLED: true,
+	PWA_ENABLED: false,
+	PWA_OPTIONS: null,
 	CURRENT_MODE: 'production',
 	RESOLVED_MDX_CONFIG: undefined,
 	RESOLVED_VITE_CONFIG: undefined

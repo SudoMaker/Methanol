@@ -18,13 +18,7 @@
  * under the License.
  */
 
-import { createDOMRenderer } from 'refui/dom'
-import { defaults } from 'refui/browser'
-import { lazy } from 'refui'
-import { init } from 'methanol:loader'
-import { registry } from 'methanol:registry'
-import 'methanol:pwa-inject'
+import { withBase } from '../config.js'
+import { cached } from '../utils.js'
 
-const R = createDOMRenderer(defaults)
-
-init(registry, R)
+export const swOfflineFallback = cached(() => withBase('offline.html'))

@@ -383,8 +383,27 @@ export const applyConfig = async (config, mode) => {
 	state.RESOLVED_MDX_CONFIG = undefined
 	state.RESOLVED_VITE_CONFIG = undefined
 	state.PAGEFIND_ENABLED = resolvePagefindEnabled(config)
+	if (cli.CLI_SEARCH !== undefined) {
+		state.PAGEFIND_ENABLED = cli.CLI_SEARCH
+	}
 	state.PAGEFIND_OPTIONS = resolvePagefindOptions(config)
 	state.PAGEFIND_BUILD = resolvePagefindBuild(config)
+	
+	if (hasOwn(config, 'pwa')) {
+		if (config.pwa === true) {
+			state.PWA_ENABLED = true
+			state.PWA_OPTIONS = null
+		} else if (typeof config.pwa === 'object' && config.pwa !== null) {
+			state.PWA_ENABLED = true
+			state.PWA_OPTIONS = config.pwa
+		} else {
+			state.PWA_ENABLED = false
+			state.PWA_OPTIONS = null
+		}
+	}
+	if (cli.CLI_PWA !== undefined) {
+		state.PWA_ENABLED = cli.CLI_PWA
+	}
 	state.USER_PRE_BUILD_HOOKS = normalizeHooks(config.preBuild)
 	state.USER_POST_BUILD_HOOKS = normalizeHooks(config.postBuild)
 	state.USER_PRE_BUNDLE_HOOKS = normalizeHooks(config.preBundle)

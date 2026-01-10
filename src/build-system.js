@@ -20,7 +20,9 @@
 
 import { writeFile, mkdir, rm, readFile, readdir, stat } from 'fs/promises'
 import { resolve, dirname, join } from 'path'
+import { fileURLToPath } from 'url'
 import { build as viteBuild, mergeConfig, normalizePath } from 'vite'
+import { VitePWA } from 'vite-plugin-pwa'
 import { state, cli } from './state.js'
 import { resolveUserViteConfig } from './config.js'
 import { buildPagesContext } from './pages.js'
@@ -29,6 +31,9 @@ import { buildComponentRegistry } from './components.js'
 import { methanolVirtualHtmlPlugin, methanolResolverPlugin } from './vite-plugins.js'
 import { createStageLogger } from './stage-logger.js'
 import { preparePublicAssets } from './public-assets.js'
+
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = dirname(__filename)
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
@@ -102,10 +107,7 @@ export const buildHtmlEntries = async () => {
 	for (let i = 0; i < pagesContext.pages.length; i++) {
 		const page = pagesContext.pages[i]
 		if (logEnabled) {
-			stageLogger.update(
-				renderToken,
-				`Rendering pages [${i + 1}/${totalPages}] ${page.filePath}`
-			)
+			stageLogger.update(renderToken, `Rendering pages [${i + 1}/${totalPages}] ${page.filePath}`)
 		}
 		const html = await renderHtml({
 			routePath: page.routePath,
@@ -176,6 +178,8 @@ export const runViteBuild = async (entry, htmlCache) => {
 		})
 	}
 	const copyPublicDirEnabled = state.STATIC_DIR !== false
+	const manifestConfig = state.PWA_OPTIONS?.manifest || {}
+	const resolvedManifest = { name: state.SITE_NAME, short_name: state.SITE_NAME, ...manifestConfig }
 	const baseConfig = {
 		configFile: false,
 		root: state.PAGES_DIR,
@@ -198,10 +202,42 @@ export const runViteBuild = async (entry, htmlCache) => {
 		resolve: {
 			dedupe: ['refui', 'methanol']
 		},
-		plugins: [methanolVirtualHtmlPlugin(htmlCache), methanolResolverPlugin()]
+		plugins: [
+			methanolVirtualHtmlPlugin(htmlCache),
+			methanolResolverPlugin(),
+			state.PWA_ENABLED
+				? VitePWA({
+						injectRegister: 'auto',
+						registerType: 'autoUpdate',
+						strategies: 'injectManifest',
+						srcDir: resolve(__dirname, 'client'),
+						filename: 'sw.js',
+						manifest: resolvedManifest,
+						injectManifest: {
+							globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+							...(state.PWA_OPTIONS?.injectManifest || {})
+						}
+					})
+				: null
+		]
 	}
 	const userConfig = await resolveUserViteConfig('build')
 	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
-	await viteBuild(finalConfig)
+
+	const originalLog = console.log
+	const originalWarn = console.warn
+	if (!cli.CLI_VERBOSE) {
+		console.log = () => {}
+		console.warn = () => {}
+	}
+
+	try {
+		await viteBuild(finalConfig)
+	} finally {
+		if (!cli.CLI_VERBOSE) {
+			console.log = originalLog
+			console.warn = originalWarn
+		}
+	}
 	stageLogger.end(token)
 }

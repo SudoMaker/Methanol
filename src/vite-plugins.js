@@ -26,7 +26,8 @@ import { normalizePath } from 'vite'
 import { state } from './state.js'
 import { resolveBasePrefix } from './config.js'
 import { genRegistryScript } from './components.js'
-import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT } from './assets.js'
+import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT, PWA_INJECT_SCRIPT } from './virtual-module/assets.js'
+import { swOfflineFallback } from './virtual-module/sw-fallback.js'
 import { projectRequire } from './node-loader.js'
 
 const require = createRequire(import.meta.url)
@@ -129,9 +130,25 @@ const virtualModuleMap = {
 	get 'registry.js'() {
 		return `export const registry = ${genRegistryScript()}`
 	},
-	loader: LOADER_SCRIPT,
-	'inject.js': INJECT_SCRIPT,
-	'pagefind-loader': PAGEFIND_LOADER_SCRIPT
+	get loader() {
+		return LOADER_SCRIPT()
+	},
+	get 'inject.js'() {
+		return INJECT_SCRIPT()
+	},
+	get 'pagefind-loader'() {
+		return PAGEFIND_LOADER_SCRIPT()
+	},
+	get 'pwa-inject'() {
+		if (state.PWA_ENABLED) {
+			return PWA_INJECT_SCRIPT()
+		}
+
+		return ''
+	},
+	get 'sw-fallback'() {
+		return swOfflineFallback()
+	}
 }
 
 const getModuleIdSegment = (id, start) => {

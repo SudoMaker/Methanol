@@ -21,6 +21,7 @@
 import { style } from './logger.js'
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+const log = console.log.bind(console)
 
 export const createStageLogger = (enabled) => {
 	let lastLength = 0
@@ -28,13 +29,13 @@ export const createStageLogger = (enabled) => {
 	const writeLine = (text, newline) => {
 		if (!process.stdout || !process.stdout.write) {
 			if (newline) {
-				console.log(text)
+				log(text)
 			}
 			return
 		}
 		if (!isTty) {
 			if (newline) {
-				console.log(text)
+				log(text)
 			}
 			return
 		}

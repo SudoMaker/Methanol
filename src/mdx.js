@@ -75,9 +75,7 @@ const resolveUserHeadAssets = () => {
 }
 
 const resolvePageAssetUrl = (page, filePath) => {
-	const root = page.source === 'theme' && state.THEME_PAGES_DIR
-		? state.THEME_PAGES_DIR
-		: state.PAGES_DIR
+	const root = page.source === 'theme' && state.THEME_PAGES_DIR ? state.THEME_PAGES_DIR : state.PAGES_DIR
 	if (!root) return null
 	const relPath = relative(root, filePath).replace(/\\/g, '/')
 	if (!relPath || relPath.startsWith('..')) return null
@@ -89,10 +87,8 @@ const resolvePageHeadAssets = (page) => {
 	const baseDir = dirname(page.filePath)
 	const baseName = basename(page.filePath).replace(/\.(mdx|md)$/, '')
 	const pagesRoot = state.PAGES_DIR ? resolve(state.PAGES_DIR) : null
-	const isRootIndex =
-		pagesRoot && baseName === 'index' && resolve(baseDir) === pagesRoot && page.source !== 'theme'
-	const isRootStylePage =
-		pagesRoot && baseName === 'style' && resolve(baseDir) === pagesRoot && page.source !== 'theme'
+	const isRootIndex = pagesRoot && baseName === 'index' && resolve(baseDir) === pagesRoot && page.source !== 'theme'
+	const isRootStylePage = pagesRoot && baseName === 'style' && resolve(baseDir) === pagesRoot && page.source !== 'theme'
 	const assets = []
 	const cssPath = resolve(baseDir, `${baseName}.css`)
 	if (existsSync(cssPath)) {
@@ -132,13 +128,7 @@ const resolvePageHeadAssets = (page) => {
 	return assets
 }
 
-export const buildPageContext = ({
-	routePath,
-	filePath,
-	pageMeta,
-	pagesContext,
-	lazyPagesTree = false
-}) => {
+export const buildPageContext = ({ routePath, filePath, pageMeta, pagesContext, lazyPagesTree = false }) => {
 	const page = pageMeta
 	const language = pagesContext.getLanguageForRoute ? pagesContext.getLanguageForRoute(routePath) : null
 	const getSiblings = pagesContext.getSiblings
@@ -349,13 +339,7 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 	}
 }
 
-export const renderHtml = async ({
-	routePath,
-	filePath,
-	components,
-	pagesContext,
-	pageMeta
-}) => {
+export const renderHtml = async ({ routePath, filePath, components, pagesContext, pageMeta }) => {
 	const ctx = buildPageContext({
 		routePath,
 		filePath,

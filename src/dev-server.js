@@ -332,10 +332,6 @@ export const runViteDev = async () => {
 			} else {
 				return next()
 			}
-		} else if (requestedPath === '/404' && notFoundPage) {
-			filePath = notFoundPage.filePath
-			renderRoutePath = '/404'
-			status = 404
 		} else if (!pageMeta && !existsSync(filePath)) {
 			if (notFoundPage) {
 				filePath = notFoundPage.filePath

@@ -291,9 +291,9 @@ const buildPagesTree = (pages, options = {}) => {
 	}
 	for (const page of treePages) {
 		if (page.hidden && !(includeHiddenRoot && page.routePath === rootPath)) {
-			const isHidden404 = page.routePath === '/404'
+			const isHiddenSpecial = page.routePath === '/404' || page.routePath === '/offline'
 			const shouldExposeHidden =
-				!isHidden404 &&
+				!isHiddenSpecial &&
 				page.hiddenByFrontmatter === true &&
 				(
 					page.routePath === currentRoutePath ||
@@ -436,11 +436,15 @@ export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
 	const frontmatterHidden = metadata.frontmatter?.hidden
 	const hiddenByFrontmatter = frontmatterHidden === true
 	const isNotFoundPage = routePath === '/404'
-	const hidden = frontmatterHidden === false
-		? false
-		: frontmatterHidden === true
-			? true
-			: isNotFoundPage || Boolean(metadata.frontmatter?.isRoot)
+	const isOfflinePage = routePath === '/offline'
+	const isSpecialPage = isNotFoundPage || isOfflinePage
+	const hidden = isSpecialPage
+		? true
+		: frontmatterHidden === false
+			? false
+			: frontmatterHidden === true
+				? true
+				: Boolean(metadata.frontmatter?.isRoot)
 	return {
 		routePath,
 		routeHref: withBase(routePath),
@@ -523,7 +527,13 @@ const collectPages = async () => {
 
 const buildIndexFallback = (pages, siteName) => {
 	const visiblePages = pages
-		.filter((page) => !page.isInternal && page.routePath !== '/')
+		.filter(
+			(page) =>
+				!page.isInternal &&
+				page.routePath !== '/' &&
+				page.routePath !== '/404' &&
+				page.routePath !== '/offline'
+		)
 		.sort((a, b) => a.routePath.localeCompare(b.routePath))
 
 	const lines = [

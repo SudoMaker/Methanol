@@ -75,7 +75,8 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 	const siteName = ctx.site.name || 'Methanol Site'
 	const title = page.title || siteName
 	const currentRoute = page.routeHref || ''
-	const baseHref = page.routeHref === '/404' ? ctx.site.base || '/' : null
+	const baseHref =
+		page.routeHref === '/404' || page.routeHref === '/offline' ? ctx.site.base || '/' : null
 	const toc = page.toc?.length ? renderToc(page.toc) : null
 	const hasToc = Boolean(toc)
 	const layoutClass = hasToc ? 'layout-container' : 'layout-container no-toc'

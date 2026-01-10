@@ -18,13 +18,8 @@
  * under the License.
  */
 
-import { createDOMRenderer } from 'refui/dom'
-import { defaults } from 'refui/browser'
-import { lazy } from 'refui'
-import { init } from 'methanol:loader'
-import { registry } from 'methanol:registry'
-import 'methanol:pwa-inject'
-
-const R = createDOMRenderer(defaults)
-
-init(registry, R)
+if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+	navigator.serviceWorker.ready.then((reg) => {
+		reg.active?.postMessage({ type: 'METHANOL_WARM_MANIFEST' });
+	});
+}
