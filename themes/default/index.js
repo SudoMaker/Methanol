@@ -21,8 +21,8 @@
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
-import PAGE_TEMPLATE from './page.jsx'
-import { createHeadings } from './heading.jsx'
+import PAGE_TEMPLATE from './src/page.jsx'
+import { createHeadings } from './src/heading.jsx'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)

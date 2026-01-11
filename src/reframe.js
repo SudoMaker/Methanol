@@ -58,7 +58,7 @@ export function env(parentEnv) {
 		const component = ({ children: childrenProp, ...props }, ...children) => {
 			const id = renderCount++
 			const idStr = id.toString(16)
-			const script = `$$rwnd(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props) : '{}'})`
+			const script = `$$rfrm(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props) : '{}'})`
 
 			return (R) => {
 				return [

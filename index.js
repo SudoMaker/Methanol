@@ -18,5 +18,10 @@
  * under the License.
  */
 
-export { env } from './src/rewind.js'
-export { HTMLRenderer } from './src/renderer.js'
+import { HTMLRenderer } from './src/renderer.js'
+
+export { env } from './src/reframe.js'
+
+const DOCTYPE_HTML = HTMLRenderer.rawHTML`<!DOCTYPE html>`
+
+export { HTMLRenderer, DOCTYPE_HTML }

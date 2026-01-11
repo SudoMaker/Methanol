@@ -41,13 +41,13 @@ import { linkResolve } from './rehype-plugins/link-resolve.js'
 const resolveRewindInject = () =>
 	HTMLRenderer.rawHTML(`<script type="module" src="${withBase('/.methanol_virtual_module/inject.js')}"></script>`)
 const RWND_FALLBACK = HTMLRenderer.rawHTML`<script>
-	if (!window.$$rwnd) {
+	if (!window.$$rfrm) {
 		const l = []
 		const r = function(k,i,p) {
 			l.push([k,i,p,document.currentScript])
 		}
 		r.$$loaded = l
-		window.$$rwnd = r
+		window.$$rfrm = r
 	}
 </script>`
 

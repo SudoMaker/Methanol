@@ -21,7 +21,7 @@
 export function init(registry, R) {
 	if (!registry) return
 
-	async function $$rwnd(key, id, props, target = document.currentScript) {
+	async function $$rfrm(key, id, props, target = document.currentScript) {
 		const loader = registry[key]
 
 		if (!loader) {
@@ -103,14 +103,14 @@ export function init(registry, R) {
 	}
 
 	let loaded = []
-	if (window.$$rwnd) {
-		loaded = window.$$rwnd.$$loaded
+	if (window.$$rfrm) {
+		loaded = window.$$rfrm.$$loaded
 	}
-	window.$$rwnd = $$rwnd
+	window.$$rfrm = $$rfrm
 
 	if (loaded) {
 		for (let i = 0; i < loaded.length; i++) {
-			$$rwnd.apply(null, loaded[i])
+			$$rfrm.apply(null, loaded[i])
 		}
 	}
 }

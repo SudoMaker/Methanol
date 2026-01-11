@@ -6,19 +6,13 @@ title: Welcome
 
 Methanol turns your content folder into a static site with rEFui and MDX, file-based routing, and a fast dev server.
 
+If you're seeing this page, that means you haven't created your `index.mdx` yet.
+
 ## Quick Start
-
-```bash
-npx methanol dev
-```
-
-Open `http://localhost:5173`.
-
-## Your Content Folder
 
 Pages are currently read from the configured `pagesDir`:
 
-<p><code>{ctx.site?.pagesDir || 'pages/'}</code></p>
+<p><code>{ctx.site.pagesDir || 'pages/'}</code></p>
 
 You can change this with `pagesDir` in your config or `--input` on the CLI. Create an `index.mdx` in that folder to replace this page.
 
@@ -29,3 +23,7 @@ components/   # JSX/TSX components for MDX
 public/       # static assets copied as-is
 dist/         # production output
 ```
+
+## Further Reading
+
+Visit [Methanol Docs](https://methanol.sudomaker.com) for details.

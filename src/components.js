@@ -22,7 +22,7 @@ import { readdir, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import { join, extname, basename } from 'path'
 import { pathToFileURL } from 'url'
-import { env } from './rewind.js'
+import { env } from './reframe.js'
 import { state } from './state.js'
 
 const normalizeComponentName = (value) => basename(value)
@@ -47,10 +47,10 @@ export const bumpComponentImportNonce = () => {
 	return componentImportNonce
 }
 
-export const rewindEnv = env()
-export const client = rewindEnv.client
-export const invalidateRegistryEntry = rewindEnv.invalidate
-export const genRegistryScript = rewindEnv.genRegistryScript
+export const reframeEnv = env()
+export const client = reframeEnv.client
+export const invalidateRegistryEntry = reframeEnv.invalidate
+export const genRegistryScript = reframeEnv.genRegistryScript
 
 const resolveComponentExport = (componentPath, ext) => {
 	const staticCandidate = `${componentPath}.static${ext}`

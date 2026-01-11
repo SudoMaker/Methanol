@@ -26,8 +26,8 @@ import { mergeConfig } from 'vite'
 import { cli, state } from './state.js'
 import { logger } from './logger.js'
 import { HTMLRenderer } from './renderer.js'
-import { rewindEnv } from './components.js'
-import { env as createEnv } from './rewind.js'
+import { reframeEnv } from './components.js'
+import { env as createEnv } from './reframe.js'
 import { cached, cachedStr } from './utils.js'
 import defaultTheme from '../themes/default/index.js'
 
@@ -324,7 +324,7 @@ export const applyConfig = async (config, mode) => {
 	}
 	const themeEnv = state.USER_THEME.env || createEnv()
 	state.THEME_ENV = themeEnv
-	rewindEnv.setParent(themeEnv)
+	reframeEnv.setParent(themeEnv)
 	const themeRoot = state.USER_THEME.root || root
 	const themeComponentDirValue = hasOwn(state.USER_THEME, 'componentsDir')
 		? state.USER_THEME.componentsDir

@@ -18,12 +18,11 @@
  * under the License.
  */
 
-import { HTMLRenderer as R } from 'methanol'
-import { renderToc } from './components/ThemeToCContainer.static.jsx'
-
-const DOCHTML = R.rawHTML`<!DOCTYPE html>`
+import { HTMLRenderer as R, DOCTYPE_HTML } from 'methanol'
+import { renderToc } from '../components/ThemeToCContainer.static.jsx'
 
 const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
+	// console.log(nodes)
 	const items = []
 	let hasActive = false
 	for (const node of nodes) {
@@ -149,7 +148,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 	) : null
 	return (
 		<>
-			{DOCHTML}
+			{DOCTYPE_HTML}
 			<html lang={htmlLang}>
 				<head>
 					<meta charset="UTF-8" />
@@ -245,7 +244,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 								{pagefindEnabled ? <ThemeSearchBox options={pagefindOptions} /> : null}
 							</div>
 							<nav>
-								<ul data-depth="0">{tree.items}</ul>
+								<ul data-depth="0">{...tree.items}</ul>
 							</nav>
 							<div class="sidebar-footer">
 								{languageSelector}
