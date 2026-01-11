@@ -101,7 +101,7 @@ const withCommonOptions = (y) =>
 			type: 'boolean',
 			default: false
 		})
-		.option('code-highlighting', {
+		.option('highlight', {
 			describe: 'Enable or disable code highlighting',
 			type: 'boolean',
 			coerce: (value) => {
@@ -160,7 +160,7 @@ export const cli = {
 	CLI_OUTPUT_DIR: argv.output || null,
 	CLI_CONFIG_PATH: argv.config || null,
 	CLI_SITE_NAME: argv['site-name'] || null,
-	CLI_CODE_HIGHLIGHTING: typeof argv['code-highlighting'] === 'boolean' ? argv['code-highlighting'] : null,
+	CLI_CODE_HIGHLIGHTING: typeof argv.highlight === 'boolean' ? argv.highlight : null,
 	CLI_VERBOSE: Boolean(argv.verbose),
 	CLI_BASE: argv.base || null,
 	CLI_SEARCH: argv.search,
