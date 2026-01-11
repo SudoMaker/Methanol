@@ -20,10 +20,15 @@
 
 import { clientsClaim } from 'workbox-core'
 import { registerRoute } from 'workbox-routing'
-import { StaleWhileRevalidate } from 'workbox-strategies'
-import { CacheableResponsePlugin } from 'workbox-cacheable-response'
+import { cached, cachedStr } from '../utils.js'
 
-const resolveBasePrefix = () => {
+const __WB_MANIFEST = self.__WB_MANIFEST
+const BATCH_SIZE = 5
+
+self.skipWaiting()
+clientsClaim()
+
+const resolveBasePrefix = cached(() => {
 	let base = import.meta.env?.BASE_URL || '/'
 	if (!base || base === '/' || base === './') return ''
 	if (base.startsWith('http://') || base.startsWith('https://')) {
@@ -36,54 +41,134 @@ const resolveBasePrefix = () => {
 	if (!base.startsWith('/')) return ''
 	if (base.endsWith('/')) base = base.slice(0, -1)
 	return base
-}
+})
 
-const withBase = (path) => {
+const resolveCurrentBasePrefix = cached(() => {
+	const prefix = resolveBasePrefix()
+	if (!prefix) {
+		return self.location.origin
+	}
+	return new URL(prefix, self.location.origin).href
+})
+
+const withBase = cachedStr((path) => {
 	const prefix = resolveBasePrefix()
 	if (!prefix || path.startsWith(`${prefix}/`)) return path
 	return `${prefix}${path}`
-}
+})
 
-self.skipWaiting()
-clientsClaim()
-
-const NOT_FOUND_URL = withBase('/404.html')
-const OFFLINE_FALLBACK_URL = withBase('/offline.html')
+const NOT_FOUND_URL = new URL(withBase('/404.html'), self.location.origin).href.toLowerCase()
+const OFFLINE_FALLBACK_URL = new URL(withBase('/offline.html'), self.location.origin).href.toLowerCase()
 
 const PAGES_CACHE = withBase(':methanol-pages-swr')
 const ASSETS_CACHE = withBase(':methanol-assets-swr')
 
-// Precache the 404/offline fallback pages during install
+const stripBase = cachedStr((url) => {
+	const base = resolveCurrentBasePrefix()
+	if (!base) return url
+	if (url === base) return '/'
+	if (url.startsWith(`${base}/`)) return url.slice(base.length)
+	return url
+})
+
+function isRootOrAssets(url) {
+	const basePath = stripBase(url)
+	if (basePath.startsWith('/assets/')) return true
+	const trimmed = basePath.startsWith('/') ? basePath.slice(1) : basePath
+	return trimmed !== '' && !trimmed.includes('/')
+}
+
+const getManifestEntries = cached(() => {
+	const entries = []
+	for (const entry of __WB_MANIFEST) {
+		if (!entry?.url) continue
+		entries.push({
+			url: new URL(entry.url, self.location.href).toString(),
+			revision: entry.revision
+		})
+	}
+	return entries
+})
+
+const getManifestIndex = cached(() => {
+	const map = new Map()
+	for (const entry of getManifestEntries()) {
+		map.set(manifestKey(entry.url), entry.revision ?? null)
+	}
+	return map
+})
+
+function collectManifestUrls() {
+	return getManifestEntries().map((entry) => entry.url)
+}
+
+function prioritizeManifestUrls(urls) {
+	const prioritized = []
+	const other = []
+
+	for (const url of urls) {
+		const lower = url.toLowerCase()
+		if (lower.endsWith('.css') && isRootOrAssets(url)) {
+			prioritized.push(url)
+			continue
+		}
+		if ((lower.endsWith('.js') || lower.endsWith('.mjs')) && isRootOrAssets(url)) {
+			prioritized.push(url)
+			continue
+		}
+		if (lower.endsWith('.html') && (lower === NOT_FOUND_URL || lower === OFFLINE_FALLBACK_URL)) {
+			prioritized.unshift(url)
+			continue
+		}
+		other.push(url)
+	}
+
+	return [prioritized, other]
+}
+
+// Precache prioritized entries during install
 self.addEventListener('install', (event) => {
 	event.waitUntil(
 		(async () => {
-			const cache = await openCache(PAGES_CACHE)
-			try {
-				await cache.add(NOT_FOUND_URL)
-			} catch {}
-			try {
-				await cache.add(OFFLINE_FALLBACK_URL)
-			} catch {}
-		})()
-	)
-})
-
-// Enable navigation preload (latency improvement for navigations)
-self.addEventListener('activate', (event) => {
-	event.waitUntil(
-		(async () => {
-			try {
-				await self.registration.navigationPreload?.enable()
-			} catch {}
-			// New SW activation => refresh cached entries progressively.
 			try {
 				await idbSet(KEY_FORCE, 1)
 				await idbSet(KEY_INDEX, 0)
 			} catch {}
-
-			warmManifestResumable()
+			const pageCache = await openCache(PAGES_CACHE)
+			const assetCache = await openCache(ASSETS_CACHE)
+			const manifestEntries = getManifestEntries()
+			const manifestMap = buildManifestMap(manifestEntries)
+			const previousMap = await loadStoredManifestMap()
+			const manifestUrls = manifestEntries.map((entry) => entry.url)
+			const [prioritized] = prioritizeManifestUrls(manifestUrls)
+			const { failedIndex } = await runConcurrentQueue(prioritized, {
+				concurrency: BATCH_SIZE,
+				handler: async (url) => {
+					const isHtml = url.endsWith('.html')
+					const cacheName = isHtml ? PAGES_CACHE : ASSETS_CACHE
+					const cached = await matchCache(cacheName, url)
+					const key = manifestKey(url)
+					const currentRevision = manifestMap.get(key) ?? null
+					const previousRevision = previousMap.get(key) ?? null
+					const shouldFetch = shouldFetchWithRevision({
+						cached,
+						currentRevision,
+						previousRevision
+					})
+					if (!shouldFetch) return true
+					const cache = isHtml ? pageCache : assetCache
+					return fetchAndCache(cache, url)
+				}
+			})
+			if (failedIndex !== null) {
+				throw new Error('install cache failed')
+			}
 		})()
 	)
+})
+
+self.addEventListener('activate', (event) => {
+	event.waitUntil(warmManifestResumable())
 })
 
 function stripSearch(urlString) {
@@ -93,8 +178,12 @@ function stripSearch(urlString) {
 	return u
 }
 
+function manifestKey(urlString) {
+	return stripSearch(urlString).toString()
+}
+
 function hasExtension(pathname) {
-	const last = pathname.pathname.split('/').pop() || ''
+	const last = pathname.split('/').pop() || ''
 	return last.includes('.')
 }
 
@@ -103,10 +192,10 @@ function hasExtension(pathname) {
  * - /foo/ -> /foo/index.html
  * - /foo  -> /foo.html
  */
-function htmlFallbackCandidates(pathname) {
-	if (pathname.endsWith('/')) return [pathname + 'index.html']
-	if (!hasExtension({ pathname })) return [pathname + '.html']
-	return []
+function htmlFallback(pathname) {
+	if (pathname.endsWith('/')) return pathname + 'index.html'
+	if (!hasExtension(pathname)) return pathname + '.html'
+	return null
 }
 
 /**
@@ -115,14 +204,14 @@ function htmlFallbackCandidates(pathname) {
  * - /foo  -> /foo.html
  * - ignore query params
  */
-function toNormalizedHtmlCacheKeyUrl(url) {
+function normalizeNavigationURL(url) {
 	const u = stripSearch(url.toString())
 
 	if (u.pathname.endsWith('/')) {
 		u.pathname += 'index.html'
 		return u
 	}
-	if (!hasExtension(u)) {
+	if (!hasExtension(u.pathname)) {
 		u.pathname += '.html'
 		return u
 	}
@@ -138,39 +227,80 @@ function isPrefetch(request) {
 	return purpose === 'prefetch'
 }
 
-function isAssetRequest(request) {
-	return (
-		request.destination === 'script' ||
-		request.destination === 'style' ||
-		request.destination === 'image' ||
-		request.destination === 'font'
-	)
+async function openCache(name) {
+	return caches.open(name)
 }
 
-function buildConditionalRequest(request, cached) {
-	const headers = new Headers(request.headers)
-	const etag = cached?.headers?.get?.('ETag')
-	const lastModified = cached?.headers?.get?.('Last-Modified')
-	if (etag) {
-		headers.set('If-None-Match', etag)
-	} else if (lastModified) {
-		headers.set('If-Modified-Since', lastModified)
+async function runConcurrentQueue(list, { concurrency, handler, stopOnError = true }) {
+	if (!list.length) return { ok: true, failedIndex: null }
+	let cursor = 0
+	let failedIndex = null
+
+	const worker = async () => {
+		while (true) {
+			if (stopOnError && failedIndex !== null) return
+			const index = cursor++
+			if (index >= list.length) return
+			const ok = await handler(list[index])
+			if (!ok && stopOnError) {
+				if (failedIndex === null || index < failedIndex) failedIndex = index
+			}
+		}
 	}
-	return new Request(request.url, {
-		method: 'GET',
-		headers,
-		credentials: request.credentials,
-		redirect: request.redirect,
-		referrer: request.referrer,
-		referrerPolicy: request.referrerPolicy,
-		integrity: request.integrity,
-		cache: 'no-cache',
-		mode: request.mode
+
+	const count = Math.min(concurrency, list.length)
+	await Promise.all(Array.from({ length: count }, worker))
+	return { ok: failedIndex === null, failedIndex }
+}
+
+function shouldFetchWithRevision({ cached, currentRevision, previousRevision }) {
+	if (!cached) return true
+	if (currentRevision == null) return false
+	if (previousRevision == null) return true
+	return currentRevision !== previousRevision
+}
+
+async function bufferResponse(response) {
+	const body = await response.clone().arrayBuffer()
+	return new Response(body, {
+		status: response.status,
+		statusText: response.statusText,
+		headers: response.headers
 	})
 }
 
-async function openCache(name) {
-	return caches.open(name)
+async function fetchAndCache(cache, urlString) {
+	const req = new Request(urlString, {
+		redirect: 'follow',
+		cache: 'no-store',
+		credentials: 'same-origin'
+	})
+
+	let res
+	try {
+		res = await fetch(req)
+	} catch {
+		return false
+	}
+
+	if (!res || !res.ok || res.type === 'opaqueredirect') return false
+	const responseUrl = res.url || ''
+
+	let buffered
+	try {
+		buffered = await bufferResponse(res)
+	} catch {
+		return false
+	}
+
+	await cache.put(stripSearch(urlString).toString(), buffered.clone())
+	if (responseUrl && responseUrl !== urlString) {
+		const redirectKey = stripSearch(responseUrl).toString()
+		if (redirectKey !== stripSearch(urlString).toString()) {
+			await cache.put(redirectKey, buffered.clone())
+		}
+	}
+	return true
 }
 
 async function matchAnyCache(urlString) {
@@ -178,22 +308,31 @@ async function matchAnyCache(urlString) {
 	return caches.match(keyUrl, { ignoreSearch: true })
 }
 
-async function matchFromCache(cacheName, urlString) {
+async function matchCache(cacheName, urlString) {
 	const cache = await openCache(cacheName)
 	const keyUrl = stripSearch(urlString).toString()
 	return cache.match(keyUrl, { ignoreSearch: true })
 }
 
-async function putIntoCache(cacheName, urlString, response) {
+async function putCache(cacheName, urlString, response) {
 	const cache = await openCache(cacheName)
 	const keyUrl = stripSearch(urlString).toString()
-	await cache.put(keyUrl, response)
-}
+	let toCache = response
+	if (cacheName === PAGES_CACHE || cacheName === ASSETS_CACHE) {
+		try {
+			toCache = await bufferResponse(response)
+		} catch {
+			return false
+		}
+	}
 
-const assetStrategy = new StaleWhileRevalidate({
-	cacheName: ASSETS_CACHE,
-	plugins: [new CacheableResponsePlugin({ statuses: [200] })]
-})
+	try {
+		await cache.put(keyUrl, toCache.clone())
+	} catch {
+		return false
+	}
+	return true
+}
 
 function fetchWithTimeout(request, timeout = 8000) {
 	return Promise.race([
@@ -216,31 +355,45 @@ async function fetchWithCleanUrlFallback(event, originalRequest, { usePreload = 
 	}
 
 	try {
-		const res = await fetchWithTimeout(originalRequest.clone())
-		if (res && (allowNotOk || res.ok)) return res
-	} catch {}
-
-	const fallbacks = htmlFallbackCandidates(originalUrl.pathname)
-	for (const p of fallbacks) {
-		const u2 = new URL(originalUrl.toString())
-		u2.pathname = p
-
-		try {
-			const req2 = new Request(u2.toString(), {
+		const res = await fetchWithTimeout(
+			new Request(originalRequest.url, {
 				method: 'GET',
 				headers: originalRequest.headers,
 				credentials: originalRequest.credentials,
-				redirect: originalRequest.redirect,
+				redirect: 'follow',
 				referrer: originalRequest.referrer,
 				referrerPolicy: originalRequest.referrerPolicy,
 				integrity: originalRequest.integrity,
 				cache: originalRequest.cache
 			})
+		)
+		if (res && (allowNotOk || res.ok)) return res
+	} catch {}
 
-			const res2 = await fetchWithTimeout(req2)
-			if (res2 && (allowNotOk || res2.ok)) return res2
-		} catch {}
+	const fallback = htmlFallback(originalUrl.pathname)
+
+	if (!fallback) {
+		return null
 	}
+
+	const u2 = new URL(originalUrl.toString())
+	u2.pathname = fallback
+
+	try {
+		const req2 = new Request(u2.toString(), {
+			method: 'GET',
+			headers: originalRequest.headers,
+			credentials: originalRequest.credentials,
+			redirect: 'follow',
+			referrer: originalRequest.referrer,
+			referrerPolicy: originalRequest.referrerPolicy,
+			integrity: originalRequest.integrity,
+			cache: originalRequest.cache
+		})
+
+		const res2 = await fetchWithTimeout(req2)
+		if (res2 && (allowNotOk || res2.ok)) return res2
+	} catch {}
 
 	return null
 }
@@ -251,13 +404,13 @@ function withStatus(response, status) {
 }
 
 async function serveNotFound() {
-	const cached = await matchFromCache(PAGES_CACHE, NOT_FOUND_URL)
+	const cached = await matchCache(PAGES_CACHE, NOT_FOUND_URL)
 	if (cached) return withStatus(cached, 404)
 
 	try {
 		const res = await fetch(NOT_FOUND_URL)
 		if (res && res.ok) {
-			await putIntoCache(PAGES_CACHE, NOT_FOUND_URL, res.clone())
+			await putCache(PAGES_CACHE, NOT_FOUND_URL, res.clone())
 			return withStatus(res, 404)
 		}
 	} catch {}
@@ -269,12 +422,12 @@ async function serveNotFound() {
 }
 
 async function serveOffline() {
-	const cached = await matchFromCache(PAGES_CACHE, OFFLINE_FALLBACK_URL)
+	const cached = await matchCache(PAGES_CACHE, OFFLINE_FALLBACK_URL)
 	if (cached) return withStatus(cached, 503)
 
 	const anyCached = await matchAnyCache(OFFLINE_FALLBACK_URL)
 	if (anyCached) {
-		await putIntoCache(PAGES_CACHE, OFFLINE_FALLBACK_URL, anyCached.clone())
+		await putCache(PAGES_CACHE, OFFLINE_FALLBACK_URL, anyCached.clone())
 		return withStatus(anyCached, 503)
 	}
 
@@ -284,66 +437,60 @@ async function serveOffline() {
 	})
 }
 
-// NAVIGATIONS: instant-if-cached + background revalidate + fallback rewrite + offline fallback /offline.html
+// NAVIGATIONS: cache-first for manifest pages, network fallback for others
 registerRoute(
 	({ request, url }) => (isHtmlNavigation(request) || isPrefetch(request)) && url.origin === self.location.origin,
 	async ({ event, request }) => {
-		if (isHtmlNavigation(request) && event.preloadResponse) {
-			event.waitUntil(event.preloadResponse.catch(() => {}))
-		}
-		const normalizedKey = toNormalizedHtmlCacheKeyUrl(new URL(request.url)).toString()
+		const normalizedKey = normalizeNavigationURL(new URL(request.url)).toString()
+		const key = manifestKey(normalizedKey)
+		const inManifest = getManifestIndex().has(key)
 
-		const cached = await matchFromCache(PAGES_CACHE, normalizedKey)
-		if (cached) {
-			event.waitUntil(
-				(async () => {
-					const revalidateRequest = buildConditionalRequest(request, cached)
-					const fresh = await fetchWithCleanUrlFallback(event, revalidateRequest, {
-						usePreload: false,
-						allowNotOk: true
-					})
-					if (fresh && fresh.status === 304) return
-					if (fresh && fresh.ok) await putIntoCache(PAGES_CACHE, normalizedKey, fresh.clone())
-				})()
-			)
-			return cached
+		if (inManifest) {
+			const cached = await matchCache(PAGES_CACHE, normalizedKey)
+			if (cached) return cached
 		}
 
 		const fresh = await fetchWithCleanUrlFallback(event, request, {
 			usePreload: isHtmlNavigation(request),
 			allowNotOk: true
 		})
-		if (fresh && fresh.ok) {
-			await putIntoCache(PAGES_CACHE, normalizedKey, fresh.clone())
+		if (fresh && fresh.status === 200) {
+			if (inManifest) {
+				await putCache(PAGES_CACHE, normalizedKey, fresh.clone())
+			}
 			return fresh
 		}
 		if (fresh && fresh.status === 404) {
-			return serveNotFound(request)
+			return serveNotFound()
 		}
 
 		if (fresh) return fresh
 
-		return serveOffline(request)
+		return serveOffline()
 	}
 )
 
 registerRoute(
-	({ request, url }) => url.origin === self.location.origin && isAssetRequest(request),
-	async (args) => {
-		const u = stripSearch(args.request.url)
-		const normalizedRequest = new Request(u.toString(), {
-			method: 'GET',
-			headers: args.request.headers,
-			credentials: args.request.credentials,
-			redirect: args.request.redirect,
-			referrer: args.request.referrer,
-			referrerPolicy: args.request.referrerPolicy,
-			integrity: args.request.integrity,
-			cache: args.request.cache,
-			mode: args.request.mode
-		})
+	({ request, url }) =>
+		url.origin === self.location.origin &&
+		request.method === 'GET' &&
+		!isHtmlNavigation(request) &&
+		!isPrefetch(request) &&
+		getManifestIndex().has(manifestKey(request.url)),
+	async ({ request }) => {
+		const key = manifestKey(request.url)
+		const cached = await matchCache(ASSETS_CACHE, key)
+		if (cached) return cached
 
-		return assetStrategy.handle({ ...args, request: normalizedRequest })
+		try {
+			const res = await fetch(request)
+			if (res && res.status === 200) {
+				await putCache(ASSETS_CACHE, key, res.clone())
+			}
+			return res
+		} catch {
+			return new Response(null, { status: 503 })
+		}
 	}
 )
 
@@ -352,6 +499,7 @@ const DB_STORE = 'kv'
 const KEY_INDEX = 'warmIndex'
 const KEY_LEASE = 'warmLease'
 const KEY_FORCE = 'warmForce'
+const KEY_MANIFEST = 'warmManifest'
 
 function idbOpen() {
 	return new Promise((resolve, reject) => {
@@ -403,6 +551,22 @@ function randomId() {
 	return `${nowMs().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
+function buildManifestMap(entries) {
+	const map = new Map()
+	for (const entry of entries || []) {
+		if (!entry?.url) continue
+		map.set(manifestKey(entry.url), entry.revision ?? null)
+	}
+	return map
+}
+
+async function loadStoredManifestMap() {
+	const stored = await idbGet(KEY_MANIFEST)
+	if (!stored) return new Map()
+	if (Array.isArray(stored)) return buildManifestMap(stored)
+	return new Map()
+}
+
 async function tryAcquireLease(leaseMs) {
 	const leaseId = randomId()
 	const deadline = nowMs() + leaseMs
@@ -433,11 +597,16 @@ async function releaseLease(lease) {
 }
 
 async function warmManifestResumable({ force = false } = {}) {
-	const manifest = self.__WB_MANIFEST || []
-	if (!manifest.length) return
+	if (!__WB_MANIFEST.length) return
 
 	const forceFlag = await idbGet(KEY_FORCE)
 	if (forceFlag) force = true
+
+	let index = (await idbGet(KEY_INDEX)) ?? 0
+	if (index < 0) {
+		if (!force) return
+		index = 0
+	}
 
 	const leaseMs = 30_000
 	const lease = await tryAcquireLease(leaseMs)
@@ -445,54 +614,80 @@ async function warmManifestResumable({ force = false } = {}) {
 
 	let completed = false
 	try {
-		let index = (await idbGet(KEY_INDEX)) || 0
-		if (index < 0) index = 0
-
-		const urls = manifest.map((e) => new URL(e.url, self.location.href).toString())
-		const batchSize = 5
-
-		for (let i = index; i < urls.length; i += batchSize) {
-			const ok = await renewLease(lease, leaseMs)
-			if (!ok) return
-
-			const slice = urls.slice(i, i + batchSize)
-
-			await Promise.allSettled(
-				slice.map(async (u) => {
-					const abs = new URL(u, self.location.href)
-					if (abs.origin !== self.location.origin) return
-
-					const isHtml = abs.pathname.endsWith('.html')
-
-					if (isHtml) {
-						const key = toNormalizedHtmlCacheKeyUrl(abs).toString()
-						if (!force && (await matchFromCache(PAGES_CACHE, key))) return
-
-						try {
-							const res = await fetch(u)
-							if (res && res.ok) await putIntoCache(PAGES_CACHE, key, res)
-						} catch {}
-						return
-					}
-
-					const key = stripSearch(u).toString()
-					if (!force && (await matchFromCache(ASSETS_CACHE, key))) return
-
-					try {
-						const res = await fetch(u)
-						if (res && res.ok) await putIntoCache(ASSETS_CACHE, key, res)
-					} catch {}
-				})
-			)
-
-			await idbSet(KEY_INDEX, i + batchSize)
-			await new Promise((r) => setTimeout(r, 0))
+		const manifestEntries = getManifestEntries()
+		const manifestMap = buildManifestMap(manifestEntries)
+		const previousMap = await loadStoredManifestMap()
+		const [, urls] = prioritizeManifestUrls(manifestEntries.map((entry) => entry.url))
+		if (!urls.length) return
+		if (index >= urls.length) {
+			completed = true
+			return
 		}
 
-		await idbSet(KEY_INDEX, urls.length)
+		const startIndex = index
+		const { failedIndex } = await runConcurrentQueue(urls.slice(startIndex), {
+			concurrency: BATCH_SIZE,
+			handler: async (abs) => {
+				const leaseOk = await renewLease(lease, leaseMs)
+				if (!leaseOk) return false
+
+				const isHtml = abs.endsWith('.html')
+				const key = manifestKey(abs)
+				const currentRevision = manifestMap.get(key) ?? null
+				const previousRevision = previousMap.get(key) ?? null
+
+				if (isHtml) {
+					const cached = await matchCache(PAGES_CACHE, abs)
+					const shouldFetch = shouldFetchWithRevision({
+						cached,
+						currentRevision,
+						previousRevision
+					})
+					if (!shouldFetch) return true
+
+					let res
+					try {
+						res = await fetch(abs)
+					} catch {
+						return false
+					}
+					if (!res || res.status !== 200) return false
+					const ok = await putCache(PAGES_CACHE, abs, res)
+					if (!ok) return false
+				} else {
+					const cached = await matchCache(ASSETS_CACHE, abs)
+					const shouldFetch = shouldFetchWithRevision({
+						cached,
+						currentRevision,
+						previousRevision
+					})
+					if (!shouldFetch) return true
+
+					let res
+					try {
+						res = await fetch(abs)
+					} catch {
+						return false
+					}
+					if (!res || res.status !== 200) return false
+					const ok = await putCache(ASSETS_CACHE, abs, res)
+					if (!ok) return false
+				}
+
+				return true
+			}
+		})
+
+		if (failedIndex !== null) {
+			await idbSet(KEY_INDEX, startIndex + failedIndex)
+			return
+		}
+
+		await idbSet(KEY_INDEX, -1) // done
 		completed = true
 	} finally {
 		if (completed) {
+			await idbSet(KEY_MANIFEST, getManifestEntries())
 			await idbSet(KEY_FORCE, 0)
 		}
 		await releaseLease(lease)
