@@ -231,25 +231,43 @@ async function openCache(name) {
 	return caches.open(name)
 }
 
+const asleep = (timeout) => new Promise((r) => setTimeout(r, timeout))
+
 async function runConcurrentQueue(list, { concurrency, handler, stopOnError = true }) {
 	if (!list.length) return { ok: true, failedIndex: null }
+
 	let cursor = 0
 	let failedIndex = null
 
-	const worker = async () => {
-		while (true) {
-			if (stopOnError && failedIndex !== null) return
-			const index = cursor++
-			if (index >= list.length) return
-			const ok = await handler(list[index])
-			if (!ok && stopOnError) {
-				if (failedIndex === null || index < failedIndex) failedIndex = index
-			}
+	const workerSet = new Array(concurrency)
+
+	const worker = async (index, data) => {
+		const ok = await handler(data)
+
+		if (!ok && stopOnError) {
+			if (failedIndex === null || index < failedIndex) failedIndex = index
+			return -1
 		}
+
+		return index
 	}
 
-	const count = Math.min(concurrency, list.length)
-	await Promise.all(Array.from({ length: count }, worker))
+	for (let i = 0; i < concurrency && cursor < list.length; i++) {
+		workerSet[i] = worker(i, list[cursor++], i)
+		await asleep(5)
+	}
+
+	while (cursor < list.length) {
+		const finishedIndex = await Promise.race(workerSet)
+		if (finishedIndex < 0) {
+			break
+		}
+		await asleep(1)
+		workerSet[finishedIndex] = worker(finishedIndex, list[cursor++])
+	}
+
+	await Promise.allSettled(workerSet)
+
 	return { ok: failedIndex === null, failedIndex }
 }
 
