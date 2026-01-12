@@ -44,6 +44,9 @@ export default () => ({
 	// optional: code highlighting (Starry Night)
 	starryNight: false,
 
+	// optional: pwa support
+	pwa: true,
+
 	// optional: site metadata
 	site: {
 		base: '/docs/'
