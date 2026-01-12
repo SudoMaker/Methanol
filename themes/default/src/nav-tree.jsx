@@ -30,10 +30,10 @@ const matchCurrentPath = onCondition(currentPath)
 const toSignal = (i) => {
 	const clone = Object.assign(new NullProtoObj(), i)
 
-	let sig = navEntryMap.get(clone.path)
+	let sig = navEntryMap.get(clone.routePath)
 	if (!sig) {
 		sig = signal(clone)
-		navEntryMap.set(clone.path, sig)
+		navEntryMap.set(clone.routePath, sig)
 	} else {
 		sig.value = clone
 	}

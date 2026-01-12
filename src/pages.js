@@ -202,6 +202,10 @@ const buildPagesTree = (pages, options = {}) => {
 		if (!rootPrefix) return normalizeRoutePath(localPath)
 		return normalizeRoutePath(`${rootPrefix}${localPath}`)
 	}
+	const resolveDirFsPath = (dir) => {
+		if (!rootDir) return resolve(state.PAGES_DIR, dir)
+		return resolve(state.PAGES_DIR, join(rootDir, dir))
+	}
 	const currentRouteWithinRoot = resolveRouteWithinRoot(currentRoutePath)
 	const isUnderRoot = (page) => {
 		if (!rootDir) return true
@@ -270,7 +274,7 @@ const buildPagesTree = (pages, options = {}) => {
 		const dir = {
 			type: 'directory',
 			name,
-			path: resolve(state.PAGES_DIR, path),
+			path: resolveDirFsPath(path),
 			children: [],
 			depth,
 			routePath: buildDirRoutePath(path),
@@ -785,7 +789,10 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		for (let i = 0; i < pages.length; i++) {
 			const page = pages[i]
 			if (logEnabled) {
-				stageLogger.update(compileToken, `Compiling MDX [${i + 1}/${totalPages}] ${page.path}`)
+				stageLogger.update(
+					compileToken,
+					`Compiling MDX [${i + 1}/${totalPages}] ${page.routePath || page.path}`
+				)
 			}
 			await compilePageMdx(page, pagesContext, {
 				lazyPagesTree: true,
