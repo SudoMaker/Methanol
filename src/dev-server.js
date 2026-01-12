@@ -104,12 +104,12 @@ export const runViteDev = async () => {
 		const assetWatcher = chokidar.watch(state.USER_ASSETS_DIR, {
 			ignoreInitial: true
 		})
-		const handleAssetUpdate = (type, filePath) => {
-			const relPath = relative(state.USER_ASSETS_DIR, filePath)
+		const handleAssetUpdate = (type, path) => {
+			const relPath = relative(state.USER_ASSETS_DIR, path)
 			enqueue(async () => {
 				await updateAsset({
 					type,
-					filePath,
+					path,
 					relPath,
 					themeDir: state.THEME_ASSETS_DIR,
 					userDir: state.USER_ASSETS_DIR,
@@ -117,9 +117,9 @@ export const runViteDev = async () => {
 				})
 			})
 		}
-		assetWatcher.on('add', (filePath) => handleAssetUpdate('add', filePath))
-		assetWatcher.on('change', (filePath) => handleAssetUpdate('change', filePath))
-		assetWatcher.on('unlink', (filePath) => handleAssetUpdate('unlink', filePath))
+		assetWatcher.on('add', (path) => handleAssetUpdate('add', path))
+		assetWatcher.on('change', (path) => handleAssetUpdate('change', path))
+		assetWatcher.on('unlink', (path) => handleAssetUpdate('unlink', path))
 	}
 
 	const themeComponentsDir = state.THEME_COMPONENTS_DIR
@@ -289,8 +289,8 @@ export const runViteDev = async () => {
 		}
 		const notFoundPage = pagesContext.pagesByRoute.get('/404')
 		let pageMeta = pagesContext.pagesByRoute.get(requestedPath)
-		let filePath = pageMeta?.filePath || resolvePageFile(requestedPath)
-		const hasMdx = Boolean(pageMeta) || existsSync(filePath)
+		let path = pageMeta?.path || resolvePageFile(requestedPath)
+		const hasMdx = Boolean(pageMeta) || existsSync(path)
 		let status = 200
 		let renderRoutePath = requestedPath
 
@@ -326,15 +326,15 @@ export const runViteDev = async () => {
 
 		if (isExcludedPath()) {
 			if (notFoundPage) {
-				filePath = notFoundPage.filePath
+				path = notFoundPage.path
 				renderRoutePath = '/404'
 				status = 404
 			} else {
 				return next()
 			}
-		} else if (!pageMeta && !existsSync(filePath)) {
+		} else if (!pageMeta && !existsSync(path)) {
 			if (notFoundPage) {
-				filePath = notFoundPage.filePath
+				path = notFoundPage.path
 				renderRoutePath = '/404'
 				status = 404
 			} else {
@@ -347,18 +347,18 @@ export const runViteDev = async () => {
 		try {
 			const renderEpoch = htmlCacheEpoch
 			const cacheEntry = htmlCache.get(renderRoutePath)
-			if (cacheEntry && cacheEntry.filePath === filePath && cacheEntry.epoch === htmlCacheEpoch) {
+			if (cacheEntry && cacheEntry.path === path && cacheEntry.epoch === htmlCacheEpoch) {
 				res.statusCode = status
 				res.setHeader('Content-Type', 'text/html')
 				res.end(cacheEntry.html)
 				return
 			}
 
-			pageMeta ??= pagesContext.getPageByRoute(renderRoutePath, { filePath })
+			pageMeta ??= pagesContext.getPageByRoute(renderRoutePath, { path })
 
 			const html = await renderHtml({
 				routePath: renderRoutePath,
-				filePath,
+				path,
 				components: {
 					...themeComponents,
 					...components
@@ -369,7 +369,7 @@ export const runViteDev = async () => {
 			if (renderEpoch === htmlCacheEpoch) {
 				htmlCache.set(renderRoutePath, {
 					html,
-					filePath,
+					path,
 					epoch: renderEpoch
 				})
 			}
@@ -425,7 +425,7 @@ export const runViteDev = async () => {
 		reload()
 	}
 
-	const getExportName = (filePath) => basename(filePath).split('.')[0]
+	const getExportName = (path) => basename(path).split('.')[0]
 
 	const findComponentExt = (dir, exportName) => {
 		for (const ext of COMPONENT_EXTENSIONS) {
@@ -440,11 +440,11 @@ export const runViteDev = async () => {
 		return null
 	}
 
-	const updateComponentEntry = async (filePath, { fallback = false } = {}) => {
+	const updateComponentEntry = async (path, { fallback = false } = {}) => {
 		bumpComponentImportNonce()
-		const exportName = getExportName(filePath)
-		const dir = dirname(filePath)
-		let ext = extname(filePath)
+		const exportName = getExportName(path)
+		const dir = dirname(path)
+		let ext = extname(path)
 		let { component, hasClient, staticPath } = await buildComponentEntry({
 			dir,
 			exportName,
@@ -484,28 +484,28 @@ export const runViteDev = async () => {
 	const PAGE_UPDATE_DEBOUNCE_MS = 30
 	const pageUpdateTimers = new Map()
 
-	const schedulePageUpdate = (filePath, kind) => {
-		const existing = pageUpdateTimers.get(filePath)
+	const schedulePageUpdate = (path, kind) => {
+		const existing = pageUpdateTimers.get(path)
 		if (existing?.timer) {
 			clearTimeout(existing.timer)
 		}
 		const entry = {
 			kind,
 			timer: setTimeout(() => {
-				pageUpdateTimers.delete(filePath)
-				enqueue(() => handlePageUpdate(filePath, kind))
+				pageUpdateTimers.delete(path)
+				enqueue(() => handlePageUpdate(path, kind))
 			}, PAGE_UPDATE_DEBOUNCE_MS)
 		}
-		pageUpdateTimers.set(filePath, entry)
+		pageUpdateTimers.set(path, entry)
 	}
 
-	const resolveWatchedSource = (filePath) => {
-		const inUserPages = routePathFromFile(filePath, state.PAGES_DIR)
+	const resolveWatchedSource = (path) => {
+		const inUserPages = routePathFromFile(path, state.PAGES_DIR)
 		if (inUserPages) {
 			return { pagesDir: state.PAGES_DIR, source: 'user', routePath: inUserPages }
 		}
 		if (state.THEME_PAGES_DIR) {
-			const inThemePages = routePathFromFile(filePath, state.THEME_PAGES_DIR)
+			const inThemePages = routePathFromFile(path, state.THEME_PAGES_DIR)
 			if (inThemePages) {
 				return { pagesDir: state.THEME_PAGES_DIR, source: 'theme', routePath: inThemePages }
 			}
@@ -513,16 +513,16 @@ export const runViteDev = async () => {
 		return null
 	}
 
-	const updatePageEntry = async (filePath, resolved) => {
+	const updatePageEntry = async (path, resolved) => {
 		if (!pagesContext || !resolved) return false
-		pagesContext.clearDerivedTitle?.(filePath)
+		pagesContext.clearDerivedTitle?.(path)
 		const nextEntry = await buildPageEntry({
-			filePath,
+			path,
 			pagesDir: resolved.pagesDir,
 			source: resolved.source
 		})
 		if (!nextEntry) return false
-		const prevEntry = pagesContext.pages?.find?.((page) => page.filePath === filePath) || null
+		const prevEntry = pagesContext.pages?.find?.((page) => page.path === path) || null
 		if (!prevEntry) return false
 		if (prevEntry.exclude !== nextEntry.exclude) return false
 		if (prevEntry.isIndex !== nextEntry.isIndex || prevEntry.dir !== nextEntry.dir) return false
@@ -542,22 +542,22 @@ export const runViteDev = async () => {
 		return true
 	}
 
-	const isUserHeadAsset = (filePath) => {
-		const name = basename(filePath)
+	const isUserHeadAsset = (path) => {
+		const name = basename(path)
 		if (name !== 'style.css' && name !== 'index.js' && name !== 'index.ts') {
 			return false
 		}
 		const root = resolve(state.PAGES_DIR || '')
-		return root && resolve(dirname(filePath)) === root
+		return root && resolve(dirname(path)) === root
 	}
 
-	const handlePageUpdate = async (filePath, kind) => {
-		if (isUserHeadAsset(filePath)) {
+	const handlePageUpdate = async (path, kind) => {
+		if (isUserHeadAsset(path)) {
 			invalidateHtmlCache()
 			reload()
 			return
 		}
-		const resolved = resolveWatchedSource(filePath)
+		const resolved = resolveWatchedSource(path)
 		if (kind === 'unlink') {
 			if (resolved?.routePath) {
 				htmlCache.delete(resolved.routePath)
@@ -567,7 +567,7 @@ export const runViteDev = async () => {
 			await refreshPages()
 			return
 		}
-		const updated = await updatePageEntry(filePath, resolved)
+		const updated = await updatePageEntry(path, resolved)
 		if (updated) {
 			invalidateHtmlCache()
 			reload()
@@ -579,15 +579,15 @@ export const runViteDev = async () => {
 		await refreshPages()
 	}
 
-	pageWatcher.on('change', (filePath) => {
-		schedulePageUpdate(filePath, 'change')
+	pageWatcher.on('change', (path) => {
+		schedulePageUpdate(path, 'change')
 	})
 
-	pageWatcher.on('add', (filePath) => {
-		schedulePageUpdate(filePath, 'add')
+	pageWatcher.on('add', (path) => {
+		schedulePageUpdate(path, 'add')
 	})
-	pageWatcher.on('unlink', (filePath) => {
-		schedulePageUpdate(filePath, 'unlink')
+	pageWatcher.on('unlink', (path) => {
+		schedulePageUpdate(path, 'unlink')
 	})
 	pageWatcher.on('addDir', () => {
 		enqueue(refreshPages)
@@ -601,13 +601,13 @@ export const runViteDev = async () => {
 		ignoreInitial: true
 	})
 
-	componentWatcher.on('add', (filePath) => {
-		if (!isComponentFile(filePath)) {
+	componentWatcher.on('add', (path) => {
+		if (!isComponentFile(path)) {
 			return
 		}
-		if (isClientComponent(filePath)) {
+		if (isClientComponent(path)) {
 			enqueue(async () => {
-				const { hasClient } = await updateComponentEntry(filePath)
+				const { hasClient } = await updateComponentEntry(path)
 				if (hasClient) {
 					invalidateRewindInject()
 				}
@@ -617,7 +617,7 @@ export const runViteDev = async () => {
 			return
 		}
 		enqueue(async () => {
-			const { hasClient } = await updateComponentEntry(filePath)
+			const { hasClient } = await updateComponentEntry(path)
 			invalidateHtmlCache()
 			if (hasClient) {
 				invalidateRewindInject()
@@ -626,19 +626,19 @@ export const runViteDev = async () => {
 		})
 	})
 
-	componentWatcher.on('change', (filePath) => {
-		if (!isComponentFile(filePath)) {
+	componentWatcher.on('change', (path) => {
+		if (!isComponentFile(path)) {
 			return
 		}
-		if (isClientComponent(filePath)) {
+		if (isClientComponent(path)) {
 			enqueue(async () => {
-				await updateComponentEntry(filePath)
+				await updateComponentEntry(path)
 				invalidateHtmlCache()
 			})
 			return
 		}
 		enqueue(async () => {
-			const { hasClient } = await updateComponentEntry(filePath)
+			const { hasClient } = await updateComponentEntry(path)
 			invalidateHtmlCache()
 			if (hasClient) {
 				invalidateRewindInject()
@@ -647,24 +647,24 @@ export const runViteDev = async () => {
 		})
 	})
 
-	componentWatcher.on('unlink', (filePath) => {
-		if (!isComponentFile(filePath)) return
-		if (isClientComponent(filePath)) {
+	componentWatcher.on('unlink', (path) => {
+		if (!isComponentFile(path)) return
+		if (isClientComponent(path)) {
 			enqueue(async () => {
-				await updateComponentEntry(filePath, { fallback: true })
+				await updateComponentEntry(path, { fallback: true })
 				invalidateRewindInject()
 				invalidateHtmlCache()
 				reload()
 			})
 			return
 		}
-		const exportName = getExportName(filePath)
+		const exportName = getExportName(path)
 		const currentSource = componentSources.get(exportName)
-		if (currentSource && currentSource !== filePath && existsSync(currentSource)) {
+		if (currentSource && currentSource !== path && existsSync(currentSource)) {
 			return
 		}
 		enqueue(async () => {
-			const { hasClient } = await updateComponentEntry(filePath, {
+			const { hasClient } = await updateComponentEntry(path, {
 				fallback: true
 			})
 			invalidateHtmlCache()

@@ -52,7 +52,7 @@ const dynamicImport = (path) => {
 	}
 }
 
-export const loadPagefind = async () => {
+export const loadPagefind = () => {
 	if (pagefindInit) return pagefindInit
 	pagefindInit = new Promise((resolve) => {
 		if (typeof window === 'undefined') {

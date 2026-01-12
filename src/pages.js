@@ -106,11 +106,11 @@ const resolveLanguageForRoute = (languages = [], routePath = '/') => {
 	return best || rootLanguage
 }
 
-export const routePathFromFile = (filePath, pagesDir = state.PAGES_DIR) => {
-	if (!filePath.endsWith('.mdx') && !filePath.endsWith('.md')) {
+export const routePathFromFile = (path, pagesDir = state.PAGES_DIR) => {
+	if (!path.endsWith('.mdx') && !path.endsWith('.md')) {
 		return null
 	}
-	const relPath = relative(pagesDir, filePath)
+	const relPath = relative(pagesDir, path)
 	if (relPath.startsWith('..')) {
 		return null
 	}
@@ -146,8 +146,8 @@ const parseFrontmatter = (raw) => {
 	}
 }
 
-const parsePageMetadata = async (filePath) => {
-	const raw = await readFile(filePath, 'utf-8')
+const parsePageMetadata = async (path) => {
+	const raw = await readFile(path, 'utf-8')
 	const { data: frontmatter, content, matter } = parseFrontmatter(raw)
 	let title = frontmatter.title
 	return {
@@ -265,7 +265,7 @@ const buildPagesTree = (pages, options = {}) => {
 		const dir = {
 			type: 'directory',
 			name,
-			path: `/${path}`,
+			path: resolve(state.PAGES_DIR, path),
 			children: [],
 			depth,
 			routePath: null,
@@ -402,7 +402,7 @@ const walkPages = async function* (dir, basePath = '') {
 		const relativePath = join(basePath, name).replace(/\\/g, '/')
 		const isIndex = name === 'index'
 		const routePath = isIndex ? (basePath ? `/${basePath}/` : '/') : `/${relativePath}`
-		yield { routePath, filePath: fullPath, isIndex }
+		yield { routePath, path: fullPath, isIndex }
 	}
 
 	for (const { entry, fullPath } of dirs) {
@@ -410,26 +410,26 @@ const walkPages = async function* (dir, basePath = '') {
 	}
 }
 
-export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
-	const routePath = routePathFromFile(filePath, pagesDir)
+export const buildPageEntry = async ({ path, pagesDir, source }) => {
+	const routePath = routePathFromFile(path, pagesDir)
 	if (!routePath) return null
-	const relPath = relative(pagesDir, filePath).replace(/\\/g, '/')
+	const relPath = relative(pagesDir, path).replace(/\\/g, '/')
 	const name = relPath.replace(/\.(mdx|md)$/, '')
 	const baseName = name.split('/').pop()
 	const dir = name.split('/').slice(0, -1).join('/')
 	const dirName = dir ? dir.split('/').pop() : ''
 	const isIndex = baseName === 'index'
 	const segments = routePath.split('/').filter(Boolean)
-	const stats = await stat(filePath)
-	const cached = pageMetadataCache.get(filePath)
+	const stats = await stat(path)
+	const cached = pageMetadataCache.get(path)
 	let metadata = null
 	if (cached && cached.mtimeMs === stats.mtimeMs) {
 		metadata = cached.metadata
 	} else {
-		metadata = await parsePageMetadata(filePath)
-		pageMetadataCache.set(filePath, { mtimeMs: stats.mtimeMs, metadata })
+		metadata = await parsePageMetadata(path)
+		pageMetadataCache.set(path, { mtimeMs: stats.mtimeMs, metadata })
 	}
-	const derived = pageDerivedCache.get(filePath)
+	const derived = pageDerivedCache.get(path)
 	const exclude = Boolean(metadata.frontmatter?.exclude)
 	const frontmatterHidden = metadata.frontmatter?.hidden
 	const hiddenByFrontmatter = frontmatterHidden === true
@@ -446,7 +446,7 @@ export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
 	return {
 		routePath,
 		routeHref: withBase(routePath),
-		filePath,
+		path,
 		source,
 		relativePath: relPath,
 		name: baseName,
@@ -480,7 +480,7 @@ const collectPagesFromDir = async (pagesDir, source) => {
 	const pages = []
 	for await (const page of walkPages(pagesDir)) {
 		const entry = await buildPageEntry({
-			filePath: page.filePath,
+			path: page.path,
 			pagesDir,
 			source
 		})
@@ -578,7 +578,7 @@ const buildNavSequence = (nodes, pagesByRoute) => {
 	const seen = new Set()
 	const addEntry = (entry) => {
 		if (!entry.routePath) return
-		const key = entry.filePath || entry.routePath
+		const key = entry.path || entry.routePath
 		if (seen.has(key)) return
 		seen.add(key)
 		result.push(entry)
@@ -620,7 +620,7 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		pages.unshift({
 			routePath: '/',
 			routeHref: withBase('/'),
-			filePath: resolve(state.PAGES_DIR, 'index.mdx'),
+			path: resolve(state.PAGES_DIR, 'index.md'),
 			relativePath: 'index.md',
 			name: 'index',
 			dir: '',
@@ -651,10 +651,10 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		}
 	}
 	const getPageByRoute = (routePath, options = {}) => {
-		const { filePath } = options || {}
-		if (filePath) {
+		const { path } = options || {}
+		if (path) {
 			for (const page of pages) {
-				if (page.routePath === routePath && page.filePath === filePath) {
+				if (page.routePath === routePath && page.path === path) {
 					return page
 				}
 			}
@@ -720,26 +720,26 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		pagesTree,
 		getPagesTree,
 		derivedTitleCache: pageDerivedCache,
-		setDerivedTitle: (filePath, title, toc) => {
-			if (!filePath) return
-			pageDerivedCache.set(filePath, { title, toc })
+		setDerivedTitle: (path, title, toc) => {
+			if (!path) return
+			pageDerivedCache.set(path, { title, toc })
 		},
-		clearDerivedTitle: (filePath) => {
-			if (!filePath) return
-			pageDerivedCache.delete(filePath)
+		clearDerivedTitle: (path) => {
+			if (!path) return
+			pageDerivedCache.delete(path)
 		},
 		refreshPagesTree: () => {
 			pagesTreeCache.clear()
 			navSequenceCache.clear()
 			pagesContext.pagesTree = getPagesTree('/')
 		},
-		getSiblings: (routePath, filePath = null) => {
+		getSiblings: (routePath, path = null) => {
 			if (!routePath) return { prev: null, next: null }
 			const sequence = getNavSequence(routePath)
 			if (!sequence.length) return { prev: null, next: null }
 			let index = -1
-			if (filePath) {
-				index = sequence.findIndex((entry) => entry.filePath === filePath)
+			if (path) {
+				index = sequence.findIndex((entry) => entry.path === path)
 			}
 			if (index < 0) {
 				index = sequence.findIndex((entry) => entry.routePath === routePath)
@@ -751,7 +751,7 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 					routePath: entry.routePath,
 					routeHref: entry.routeHref,
 					title: entry.title || entry.name || entry.routePath,
-					filePath: entry.filePath || null
+					path: entry.path || null
 				}
 			}
 			return {
@@ -778,7 +778,7 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		for (let i = 0; i < pages.length; i++) {
 			const page = pages[i]
 			if (logEnabled) {
-				stageLogger.update(compileToken, `Compiling MDX [${i + 1}/${totalPages}] ${page.filePath}`)
+				stageLogger.update(compileToken, `Compiling MDX [${i + 1}/${totalPages}] ${page.path}`)
 			}
 			await compilePageMdx(page, pagesContext, {
 				lazyPagesTree: true,

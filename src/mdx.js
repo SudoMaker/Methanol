@@ -74,18 +74,18 @@ const resolveUserHeadAssets = () => {
 	return assets
 }
 
-const resolvePageAssetUrl = (page, filePath) => {
+const resolvePageAssetUrl = (page, path) => {
 	const root = page.source === 'theme' && state.THEME_PAGES_DIR ? state.THEME_PAGES_DIR : state.PAGES_DIR
 	if (!root) return null
-	const relPath = relative(root, filePath).replace(/\\/g, '/')
+	const relPath = relative(root, path).replace(/\\/g, '/')
 	if (!relPath || relPath.startsWith('..')) return null
 	return withBase(`/${relPath}`)
 }
 
 const resolvePageHeadAssets = (page) => {
-	if (!page.filePath) return []
-	const baseDir = dirname(page.filePath)
-	const baseName = basename(page.filePath).replace(/\.(mdx|md)$/, '')
+	if (!page.path) return []
+	const baseDir = dirname(page.path)
+	const baseName = basename(page.path).replace(/\.(mdx|md)$/, '')
 	const pagesRoot = state.PAGES_DIR ? resolve(state.PAGES_DIR) : null
 	const isRootIndex = pagesRoot && baseName === 'index' && resolve(baseDir) === pagesRoot && page.source !== 'theme'
 	const isRootStylePage = pagesRoot && baseName === 'style' && resolve(baseDir) === pagesRoot && page.source !== 'theme'
@@ -128,11 +128,11 @@ const resolvePageHeadAssets = (page) => {
 	return assets
 }
 
-export const buildPageContext = ({ routePath, filePath, pageMeta, pagesContext, lazyPagesTree = false }) => {
+export const buildPageContext = ({ routePath, path, pageMeta, pagesContext, lazyPagesTree = false }) => {
 	const page = pageMeta
 	const language = pagesContext.getLanguageForRoute ? pagesContext.getLanguageForRoute(routePath) : null
 	const getSiblings = pagesContext.getSiblings
-		? () => pagesContext.getSiblings(routePath, page.filePath || filePath)
+		? () => pagesContext.getSiblings(routePath, page.path || path)
 		: null
 	if (page && getSiblings && page.getSiblings !== getSiblings) {
 		page.getSiblings = getSiblings
@@ -140,7 +140,7 @@ export const buildPageContext = ({ routePath, filePath, pageMeta, pagesContext, 
 	const ctx = {
 		routePath,
 		routeHref: withBase(routePath),
-		filePath,
+		path,
 		page,
 		pages: pagesContext.pages || [],
 		pagesByRoute: pagesContext.pagesByRoute || new Map(),
@@ -289,14 +289,14 @@ const resolveMdxConfigForPage = async (frontmatter) => {
 	return mdxConfig
 }
 
-export const compileMdx = async ({ content, filePath, ctx }) => {
+export const compileMdx = async ({ content, path, ctx }) => {
 	const mdxConfig = await resolveMdxConfigForPage(ctx.page.frontmatter)
 	const runtimeFactory = mdxConfig.development ? JSXDevFactory : JSXFactory
-	const compiled = await compile({ value: content, path: filePath }, mdxConfig)
+	const compiled = await compile({ value: content, path: path }, mdxConfig)
 
 	return await run(compiled, {
 		...runtimeFactory,
-		baseUrl: pathToFileURL(filePath).href,
+		baseUrl: pathToFileURL(path).href,
 		ctx,
 		rawHTML: HTMLRenderer.rawHTML
 	})
@@ -309,14 +309,14 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 		ctx ||
 		buildPageContext({
 			routePath: page.routePath,
-			filePath: page.filePath,
+			path: page.path,
 			pageMeta: page,
 			pagesContext,
 			lazyPagesTree
 		})
 	const mdxModule = await compileMdx({
 		content: page.content,
-		filePath: page.filePath,
+		path: page.path,
 		ctx: activeCtx
 	})
 	page.mdxComponent = mdxModule.default
@@ -332,17 +332,17 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 		}
 	}
 	if (typeof pagesContext.setDerivedTitle === 'function') {
-		pagesContext.setDerivedTitle(page.filePath, shouldUseTocTitle ? page.title : null, page.toc)
+		pagesContext.setDerivedTitle(page.path, shouldUseTocTitle ? page.title : null, page.toc)
 	}
 	if (ctx && refreshPagesTree && pagesContext.getPagesTree) {
 		ctx.pagesTree = pagesContext.getPagesTree(activeCtx.routePath)
 	}
 }
 
-export const renderHtml = async ({ routePath, filePath, components, pagesContext, pageMeta }) => {
+export const renderHtml = async ({ routePath, path, components, pagesContext, pageMeta }) => {
 	const ctx = buildPageContext({
 		routePath,
-		filePath,
+		path,
 		pageMeta,
 		pagesContext
 	})

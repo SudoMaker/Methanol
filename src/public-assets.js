@@ -110,7 +110,7 @@ export const preparePublicAssets = async ({ themeDir, userDir, targetDir }) => {
 	}
 }
 
-export const updateAsset = async ({ type, filePath, themeDir, userDir, targetDir, relPath }) => {
+export const updateAsset = async ({ type, path, themeDir, userDir, targetDir, relPath }) => {
 	const targetPath = resolve(targetDir, relPath)
 
 	if (type === 'unlink') {

@@ -107,11 +107,11 @@ export const buildHtmlEntries = async () => {
 	for (let i = 0; i < pagesContext.pages.length; i++) {
 		const page = pagesContext.pages[i]
 		if (logEnabled) {
-			stageLogger.update(renderToken, `Rendering pages [${i + 1}/${totalPages}] ${page.filePath}`)
+			stageLogger.update(renderToken, `Rendering pages [${i + 1}/${totalPages}] ${page.path}`)
 		}
 		const html = await renderHtml({
 			routePath: page.routePath,
-			filePath: page.filePath,
+			path: page.path,
 			components: mergedComponents,
 			pagesContext,
 			pageMeta: page

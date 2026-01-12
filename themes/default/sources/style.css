@@ -1073,6 +1073,13 @@ a {
 		margin-bottom: 1rem;
 	}
 
+	img {
+		max-width: 100%;
+		height: auto;
+		border-radius: var(--radius);
+		margin: 1rem 0;
+	}
+
 	p {
 		color: var(--muted);
 		margin-bottom: 1.25rem;

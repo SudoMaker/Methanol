@@ -18,12 +18,14 @@
  * under the License.
  */
 
+import NullProtoObj from 'null-prototype-object'
+
 export const cached = (fn) => {
 	let cache = null
 	return () => (cache ?? (cache = fn()))
 }
 
 export const cachedStr = (fn) => {
-	const cache = Object.create(null)
+	const cache = new NullProtoObj()
 	return (key) => (cache[key] ?? (cache[key] = fn(key)))
 }
