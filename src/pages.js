@@ -28,7 +28,6 @@ import { compilePageMdx } from './mdx.js'
 import { createStageLogger } from './stage-logger.js'
 
 const isPageFile = (name) => name.endsWith('.mdx') || name.endsWith('.md')
-const isInternalPage = (name) => name.startsWith('_') || name.startsWith('.')
 const isIgnoredEntry = (name) => name.startsWith('.') || name.startsWith('_')
 
 const pageMetadataCache = new Map()
@@ -117,7 +116,7 @@ export const routePathFromFile = (filePath, pagesDir = state.PAGES_DIR) => {
 	}
 	const name = relPath.replace(/\.(mdx|md)$/, '')
 	const baseName = name.split(/[\\/]/).pop()
-	if (isInternalPage(baseName)) {
+	if (isIgnoredEntry(baseName)) {
 		return null
 	}
 	const normalized = name.replace(/\\/g, '/')
@@ -204,7 +203,6 @@ const buildPagesTree = (pages, options = {}) => {
 		return page.routePath === rootPath || (rootPrefix && page.routePath.startsWith(`${rootPrefix}/`))
 	}
 	const treePages = pages
-		.filter((page) => !page.isInternal)
 		.filter((page) => isUnderRoot(page))
 		.map((page) => {
 			if (!rootDir) return page
@@ -456,7 +454,6 @@ export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
 		segments,
 		depth: segments.length,
 		isIndex,
-		isInternal: isInternalPage(baseName),
 		title: metadata.title || derived?.title || (baseName === 'index' ? (dirName || 'Home') : baseName),
 		weight: parseWeight(metadata.frontmatter?.weight),
 		date: parseDate(metadata.frontmatter?.date) || parseDate(stats.mtime),
@@ -472,9 +469,7 @@ export const buildPageEntry = async ({ filePath, pagesDir, source }) => {
 			size: stats.size,
 			createdAt: stats.birthtime?.toISOString?.() || null,
 			updatedAt: stats.mtime?.toISOString?.() || null
-		},
-		createdAt: stats.birthtime?.toISOString?.() || null,
-		updatedAt: stats.mtime?.toISOString?.() || null
+		}
 	}
 }
 
@@ -529,7 +524,6 @@ const buildIndexFallback = (pages, siteName) => {
 	const visiblePages = pages
 		.filter(
 			(page) =>
-				!page.isInternal &&
 				page.routePath !== '/' &&
 				page.routePath !== '/404' &&
 				page.routePath !== '/offline'
@@ -626,14 +620,13 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		pages.unshift({
 			routePath: '/',
 			routeHref: withBase('/'),
-			filePath: resolve(state.PAGES_DIR, 'index.md'),
+			filePath: resolve(state.PAGES_DIR, 'index.mdx'),
 			relativePath: 'index.md',
 			name: 'index',
 			dir: '',
 			segments: [],
 			depth: 0,
 			isIndex: true,
-			isInternal: false,
 			title: state.SITE_NAME || 'Methanol Site',
 			weight: null,
 			date: null,

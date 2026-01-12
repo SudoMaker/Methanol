@@ -26,8 +26,7 @@ import { normalizePath } from 'vite'
 import { state } from './state.js'
 import { resolveBasePrefix } from './config.js'
 import { genRegistryScript } from './components.js'
-import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT, PWA_INJECT_SCRIPT } from './virtual-module/assets.js'
-import { swOfflineFallback } from './virtual-module/sw-fallback.js'
+import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT, PWA_INJECT_SCRIPT } from './client/virtual-module/assets.js'
 import { projectRequire } from './node-loader.js'
 
 const require = createRequire(import.meta.url)
@@ -145,9 +144,6 @@ const virtualModuleMap = {
 		}
 
 		return ''
-	},
-	get 'sw-fallback'() {
-		return swOfflineFallback()
 	}
 }
 
