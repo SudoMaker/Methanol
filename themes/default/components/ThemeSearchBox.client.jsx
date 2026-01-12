@@ -30,6 +30,7 @@ const loadPagefindModule = async () => {
 
 let keybindReady = false
 let cachedPagefind = null
+const PAGE_SIZE = 10
 
 const resolveShortcutLabel = () => {
 	if (typeof navigator === 'undefined') return 'Ctrl+K'
@@ -60,48 +61,107 @@ export default function ({ options } = {}) {
 	const query = signal('')
 	const results = signal([])
 	const isLoading = signal(false)
+	const isLoadingMore = signal(false)
+	const hasMore = signal(false)
 	const activeIndex = signal(-1)
+	const loadError = signal('')
 
 	const buttonRef = signal()
 	const inputRef = signal()
+	const resultsRef = signal()
+	const loadingMoreRef = signal()
 	const resultIdPrefix = `search-result-${Math.random().toString(36).slice(2)}`
 	const activeMatch = onCondition(activeIndex)
 
 	let debounceTimer = null
+	let resultHandles = []
+	let resultOffset = 0
+	let latestSearchId = 0
 	const shortcutLabel = resolveShortcutLabel()
 	const [Inlet, Outlet] = createPortal()
 
-	const search = async (q) => {
-		isLoading.value = true
-		results.value = []
-		activeIndex.value = -1
+	const resetSearchState = () => {
+		resultHandles = []
+		resultOffset = 0
+		hasMore.value = false
+		isLoadingMore.value = false
+	}
 
-		const pagefind = await ensurePagefind(options)
-		if (!pagefind) {
-			isLoading.value = false
+	const loadMore = async (initial = false) => {
+		const searchId = latestSearchId
+		if (!initial) {
+			if (isLoadingMore.value || !hasMore.value) return
+			isLoadingMore.value = true
+		}
+
+		const slice = resultHandles.slice(resultOffset, resultOffset + PAGE_SIZE)
+		if (!slice.length) {
+			hasMore.value = false
+			if (!initial) isLoadingMore.value = false
 			return
 		}
 
 		try {
-			const searchResult = await pagefind.search(q)
-			if (searchResult?.results?.length) {
-				const data = await Promise.all(searchResult.results.slice(0, 10).map((r) => r.data()))
-				results.value = data.map((value) => ({ value, el: signal() }))
-			}
+			const data = await Promise.all(slice.map((r) => r.data()))
+			if (searchId !== latestSearchId) return
+
+			results.value = results.value.concat(data.map((value) => ({ value, el: signal() })))
+			resultOffset += slice.length
+			hasMore.value = resultOffset < resultHandles.length
 		} catch (err) {
+			if (searchId !== latestSearchId) return
+			loadError.value = 'Search is unavailable. Please refresh and try again.'
 			console.error('Search error:', err)
 		} finally {
+			if (!initial && searchId === latestSearchId) isLoadingMore.value = false
+		}
+	}
+
+	const search = async (q) => {
+		const searchId = ++latestSearchId
+		isLoading.value = true
+		results.value = []
+		activeIndex.value = -1
+		resetSearchState()
+
+		const pagefind = await ensurePagefind(options)
+		if (searchId !== latestSearchId) return
+
+		if (!pagefind) {
 			isLoading.value = false
+			loadError.value = 'Search is unavailable. Please refresh and try again.'
+			return
+		}
+		loadError.value = ''
+
+		try {
+			const searchResult = await pagefind.search(q)
+			if (searchId !== latestSearchId) return
+
+			resultHandles = searchResult?.results || []
+			resultOffset = 0
+			hasMore.value = resultHandles.length > 0
+			await loadMore(true)
+		} catch (err) {
+			if (searchId !== latestSearchId) return
+			loadError.value = 'Search is unavailable. Please refresh and try again.'
+			console.error('Search error:', err)
+		} finally {
+			if (searchId === latestSearchId) isLoading.value = false
 		}
 	}
 
 	const onInput = (event) => {
 		const value = event.target.value
 		query.value = value
+		loadError.value = ''
 		if (debounceTimer) clearTimeout(debounceTimer)
 
 		if (!value.trim()) {
+			latestSearchId++
+			isLoading.value = false
 			results.value = []
+			resetSearchState()
 			activeIndex.value = -1
 			return
 		}
@@ -118,13 +178,18 @@ export default function ({ options } = {}) {
 	const open = async () => {
 		isOpen.value = true
 		setTimeout(focusInput, 50)
-		await ensurePagefind(options)
+		const pagefind = await ensurePagefind(options)
+		if (!pagefind) {
+			loadError.value = 'Search is unavailable. Please refresh and try again.'
+		}
 	}
 
 	const close = () => {
 		isOpen.value = false
 		query.value = ''
 		results.value = []
+		loadError.value = ''
+		resetSearchState()
 		activeIndex.value = -1
 		if (debounceTimer) clearTimeout(debounceTimer)
 		if (inputRef.value) inputRef.value.blur()
@@ -150,6 +215,13 @@ export default function ({ options } = {}) {
 		if (event.key === 'ArrowDown') {
 			event.preventDefault()
 			if (results.value.length > 0) {
+				if (hasMore.value && activeIndex.value === results.value.length - 1) {
+					loadMore(false)
+					setTimeout(() => {
+						loadingMoreRef.value?.scrollIntoView({ block: 'nearest' })
+					}, 10)
+					return
+				}
 				const nextIndex = activeIndex.value >= 0 ? (activeIndex.value + 1) % results.value.length : 0
 				activeIndex.value = nextIndex
 				scrollActiveIntoView()
@@ -181,6 +253,13 @@ export default function ({ options } = {}) {
 		}
 		if (event.key === 'ArrowDown') {
 			event.preventDefault()
+			if (hasMore.value && indexValue === results.value.length - 1) {
+				loadMore(false)
+				setTimeout(() => {
+					loadingMoreRef.value?.scrollIntoView({ block: 'nearest' })
+				}, 10)
+				return
+			}
 			const nextIndex = (indexValue + 1) % results.value.length
 			activeIndex.value = nextIndex
 			scrollActiveIntoView()
@@ -197,6 +276,13 @@ export default function ({ options } = {}) {
 		}
 	}
 
+	const onResultsScroll = (event) => {
+		const el = event.currentTarget
+		if (!el) return
+		const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+		if (nearBottom) loadMore(false)
+	}
+
 	const showEmpty = $(() => !query.value)
 	const showNoResults = $(() => {
 		const _query = query.value
@@ -204,6 +290,9 @@ export default function ({ options } = {}) {
 		const _length = results.value.length
 		return _query && !_isLoading && _length === 0
 	})
+	const showError = $(() => loadError.value)
+	const showStatus = $(() => !loadError.value)
+	const showLoadingMore = $(() => isLoadingMore.value && !isLoading.value)
 
 	if (typeof window !== 'undefined') {
 		window.__methanolSearchOpen = open
@@ -280,12 +369,19 @@ export default function ({ options } = {}) {
 									$ref={inputRef}
 								/>
 							</div>
-							<div class="search-results">
-								<If condition={showEmpty}>{() => <div class="search-status">Type to start searching...</div>}</If>
-								<If condition={showNoResults}>
-									{() => <div class="search-status">No results found for "{query}"</div>}
+							<div class="search-results" on:scroll={onResultsScroll} $ref={resultsRef}>
+								<If condition={showError}>{() => <div class="search-status">{loadError}</div>}</If>
+								<If condition={showStatus}>
+									{() => (
+										<>
+											<If condition={showEmpty}>{() => <div class="search-status">Type to start searching...</div>}</If>
+											<If condition={showNoResults}>
+												{() => <div class="search-status">No results found for "{query}"</div>}
+											</If>
+											<If condition={isLoading}>{() => <div class="search-status">Searching...</div>}</If>
+										</>
+									)}
 								</If>
-								<If condition={isLoading}>{() => <div class="search-status">Searching...</div>}</If>
 								<For entries={results} indexed>
 									{({ item: { value, el }, index }) => (
 										<a
@@ -321,6 +417,19 @@ export default function ({ options } = {}) {
 										</a>
 									)}
 								</For>
+								<If condition={showLoadingMore}>
+									{() => (
+										<div
+											class="search-status"
+											$ref={(el) => {
+												loadingMoreRef.value = el
+												el.scrollIntoView({ block: 'nearest' })
+											}}
+										>
+											Loading more results...
+										</div>
+									)}
+								</If>{' '}
 							</div>
 						</div>
 					</div>
