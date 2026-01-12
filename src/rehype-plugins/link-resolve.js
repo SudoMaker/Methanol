@@ -76,8 +76,8 @@ const resolvePagesRoot = (filePath) => {
 
 export const linkResolve = () => {
 	return (tree, file) => {
-		const baseDir = file?.path ? dirname(file.path) : file?.cwd || process.cwd()
-		const pagesRoot = resolvePagesRoot(file?.path || null)
+		const baseDir = file.path ? dirname(file.path) : file.cwd || process.cwd()
+		const pagesRoot = resolvePagesRoot(file.path || null)
 		visit(tree, (node) => {
 			if (!isElement(node) || node.tagName !== 'a') {
 				return

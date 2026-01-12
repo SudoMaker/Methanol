@@ -24,6 +24,7 @@ import { cached, cachedStr } from '../utils.js'
 
 const __WB_MANIFEST = self.__WB_MANIFEST
 const BATCH_SIZE = 5
+const REVISION_HEADER = 'X-Methanol-Revision'
 
 self.skipWaiting()
 clientsClaim()
@@ -157,7 +158,7 @@ self.addEventListener('install', (event) => {
 					})
 					if (!shouldFetch) return true
 					const cache = isHtml ? pageCache : assetCache
-					return fetchAndCache(cache, url)
+					return fetchAndCache(cache, url, currentRevision)
 				}
 			})
 			if (failedIndex !== null) {
@@ -168,7 +169,7 @@ self.addEventListener('install', (event) => {
 })
 
 self.addEventListener('activate', (event) => {
-	event.waitUntil(warmManifestResumable())
+	warmManifestResumable()
 })
 
 function stripSearch(urlString) {
@@ -278,16 +279,28 @@ function shouldFetchWithRevision({ cached, currentRevision, previousRevision }) 
 	return currentRevision !== previousRevision
 }
 
-async function bufferResponse(response) {
+function shouldRevalidateCached(cached, currentRevision) {
+	if (!cached) return true
+	if (currentRevision == null) return false
+	const cachedRevision = cached.headers?.get?.(REVISION_HEADER)
+	if (cachedRevision == null) return true
+	return cachedRevision !== String(currentRevision)
+}
+
+async function bufferResponse(response, revision = null) {
 	const body = await response.clone().arrayBuffer()
+	const headers = new Headers(response.headers)
+	if (revision != null) {
+		headers.set(REVISION_HEADER, String(revision))
+	}
 	return new Response(body, {
 		status: response.status,
 		statusText: response.statusText,
-		headers: response.headers
+		headers
 	})
 }
 
-async function fetchAndCache(cache, urlString) {
+async function fetchAndCache(cache, urlString, revision = null) {
 	const req = new Request(urlString, {
 		redirect: 'follow',
 		cache: 'no-store',
@@ -306,7 +319,7 @@ async function fetchAndCache(cache, urlString) {
 
 	let buffered
 	try {
-		buffered = await bufferResponse(res)
+		buffered = await bufferResponse(res, revision)
 	} catch {
 		return false
 	}
@@ -332,13 +345,13 @@ async function matchCache(cacheName, urlString) {
 	return cache.match(keyUrl, { ignoreSearch: true })
 }
 
-async function putCache(cacheName, urlString, response) {
+async function putCache(cacheName, urlString, response, revision = null) {
 	const cache = await openCache(cacheName)
 	const keyUrl = stripSearch(urlString).toString()
 	let toCache = response
 	if (cacheName === PAGES_CACHE || cacheName === ASSETS_CACHE) {
 		try {
-			toCache = await bufferResponse(response)
+			toCache = await bufferResponse(response, revision)
 		} catch {
 			return false
 		}
@@ -461,11 +474,28 @@ registerRoute(
 	async ({ event, request }) => {
 		const normalizedKey = normalizeNavigationURL(new URL(request.url)).toString()
 		const key = manifestKey(normalizedKey)
+		const manifestRevision = getManifestIndex().get(key) ?? null
 		const inManifest = getManifestIndex().has(key)
 
 		if (inManifest) {
 			const cached = await matchCache(PAGES_CACHE, normalizedKey)
-			if (cached) return cached
+			const shouldRevalidate = shouldRevalidateCached(cached, manifestRevision)
+			if (cached && !shouldRevalidate) return cached
+			if (cached && shouldRevalidate) {
+				const fresh = await fetchWithCleanUrlFallback(event, request, {
+					usePreload: isHtmlNavigation(request),
+					allowNotOk: true
+				})
+				if (fresh && fresh.status === 200) {
+					await putCache(PAGES_CACHE, normalizedKey, fresh.clone(), manifestRevision)
+					return fresh
+				}
+				if (fresh && fresh.status === 404) {
+					return serveNotFound()
+				}
+				if (fresh) return fresh
+				return cached
+			}
 		}
 
 		const fresh = await fetchWithCleanUrlFallback(event, request, {
@@ -474,7 +504,7 @@ registerRoute(
 		})
 		if (fresh && fresh.status === 200) {
 			if (inManifest) {
-				await putCache(PAGES_CACHE, normalizedKey, fresh.clone())
+				await putCache(PAGES_CACHE, normalizedKey, fresh.clone(), manifestRevision)
 			}
 			return fresh
 		}
@@ -492,21 +522,24 @@ registerRoute(
 	({ request, url }) =>
 		url.origin === self.location.origin &&
 		request.method === 'GET' &&
+		request.destination !== 'document' &&
 		!isHtmlNavigation(request) &&
-		!isPrefetch(request) &&
 		getManifestIndex().has(manifestKey(request.url)),
 	async ({ request }) => {
 		const key = manifestKey(request.url)
+		const manifestRevision = getManifestIndex().get(key) ?? null
 		const cached = await matchCache(ASSETS_CACHE, key)
-		if (cached) return cached
+		const shouldRevalidate = shouldRevalidateCached(cached, manifestRevision)
+		if (cached && !shouldRevalidate) return cached
 
 		try {
 			const res = await fetch(request)
 			if (res && res.status === 200) {
-				await putCache(ASSETS_CACHE, key, res.clone())
+				await putCache(ASSETS_CACHE, key, res.clone(), manifestRevision)
 			}
 			return res
 		} catch {
+			if (cached) return cached
 			return new Response(null, { status: 503 })
 		}
 	}
@@ -670,7 +703,7 @@ async function warmManifestResumable({ force = false } = {}) {
 						return false
 					}
 					if (!res || res.status !== 200) return false
-					const ok = await putCache(PAGES_CACHE, abs, res)
+					const ok = await putCache(PAGES_CACHE, abs, res, currentRevision)
 					if (!ok) return false
 				} else {
 					const cached = await matchCache(ASSETS_CACHE, abs)
@@ -688,7 +721,7 @@ async function warmManifestResumable({ force = false } = {}) {
 						return false
 					}
 					if (!res || res.status !== 200) return false
-					const ok = await putCache(ASSETS_CACHE, abs, res)
+					const ok = await putCache(ASSETS_CACHE, abs, res, currentRevision)
 					if (!ok) return false
 				}
 
@@ -714,5 +747,5 @@ async function warmManifestResumable({ force = false } = {}) {
 
 self.addEventListener('message', (event) => {
 	if (event.data?.type !== 'METHANOL_WARM_MANIFEST') return
-	event.waitUntil(warmManifestResumable())
+	warmManifestResumable()
 })

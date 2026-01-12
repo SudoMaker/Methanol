@@ -134,8 +134,12 @@ const main = async () => {
 		const endTime = performance.now()
 		const duration = endTime - startTime
 		const timeString = duration > 1000 ? `${(duration / 1000).toFixed(2)}s` : `${Math.round(duration)}ms`
+		const totalPages = pagesContext?.pages?.length ?? 0
+		const pageLabel = totalPages === 1 ? 'page' : 'pages'
 		console.log()
-		logger.success(`Build completed in ${style.bold(timeString)}.`)
+		logger.success(
+			`Build complete! Processed ${style.bold(totalPages)} ${pageLabel} in ${style.bold(timeString)}.`
+		)
 		return
 	}
 	cli.showHelp()
