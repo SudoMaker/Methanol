@@ -197,6 +197,11 @@ const buildPagesTree = (pages, options = {}) => {
 		}
 		return routePath
 	}
+	const buildDirRoutePath = (dir) => {
+		const localPath = dir ? `/${dir}/` : '/'
+		if (!rootPrefix) return normalizeRoutePath(localPath)
+		return normalizeRoutePath(`${rootPrefix}${localPath}`)
+	}
 	const currentRouteWithinRoot = resolveRouteWithinRoot(currentRoutePath)
 	const isUnderRoot = (page) => {
 		if (!rootDir) return true
@@ -268,7 +273,7 @@ const buildPagesTree = (pages, options = {}) => {
 			path: resolve(state.PAGES_DIR, path),
 			children: [],
 			depth,
-			routePath: null,
+			routePath: buildDirRoutePath(path),
 			routeHref: null,
 			title: null,
 			weight: null,
@@ -436,13 +441,15 @@ export const buildPageEntry = async ({ path, pagesDir, source }) => {
 	const isNotFoundPage = routePath === '/404'
 	const isOfflinePage = routePath === '/offline'
 	const isSpecialPage = isNotFoundPage || isOfflinePage
+	const isSiteRoot = routePath === '/'
+	const frontmatterIsRoot = Boolean(metadata.frontmatter?.isRoot)
 	const hidden = isSpecialPage
 		? true
 		: frontmatterHidden === false
 			? false
 			: frontmatterHidden === true
 				? true
-				: Boolean(metadata.frontmatter?.isRoot)
+				: frontmatterIsRoot
 	return {
 		routePath,
 		routeHref: withBase(routePath),
@@ -457,7 +464,7 @@ export const buildPageEntry = async ({ path, pagesDir, source }) => {
 		title: metadata.title || derived?.title || (baseName === 'index' ? (dirName || 'Home') : baseName),
 		weight: parseWeight(metadata.frontmatter?.weight),
 		date: parseDate(metadata.frontmatter?.date) || parseDate(stats.mtime),
-		isRoot: Boolean(metadata.frontmatter?.isRoot),
+		isRoot: isSiteRoot || frontmatterIsRoot,
 		hidden,
 		hiddenByFrontmatter,
 		exclude,

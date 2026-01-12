@@ -20,66 +20,20 @@
 
 import { HTMLRenderer as R, DOCTYPE_HTML } from 'methanol'
 import { renderToc } from '../components/ThemeToCContainer.static.jsx'
+import { renderNavTree } from './nav-tree.jsx'
 
-const renderPageTree = (nodes = [], currentRoute, depth = 0) => {
-	// console.log(nodes)
-	const items = []
-	let hasActive = false
-	for (const node of nodes) {
-		const nodeRoute = node.routeHref || ''
-		if (node.type === 'directory') {
-			const label = node.title || node.name
-			const isActive = nodeRoute === currentRoute
-			const href = node.routeHref
-			const childResult = renderPageTree(node.children || [], currentRoute, depth + 1)
-			const isOpen = depth < 1 || isActive || childResult.hasActive
-			if (isOpen) hasActive = true
-			const header = href ? (
-				<a class={isActive ? 'nav-dir-link active' : 'nav-dir-link'} href={href}>
-					{label}
-				</a>
-			) : (
-				<span class="nav-dir-label">{label}</span>
-			)
-			items.push(
-				<li class={isActive ? 'is-active' : null}>
-					<details class="sidebar-collapsible" open={isOpen ? true : null}>
-						<summary class="sb-dir-header">{header}</summary>
-						{childResult.items.length ? <ul data-depth={depth + 1}>{childResult.items}</ul> : null}
-					</details>
-				</li>
-			)
-			continue
-		}
-		const label = node.title || (node.isIndex ? 'Home' : node.name)
-		const isActive = nodeRoute === currentRoute
-		if (isActive) hasActive = true
-		const href = node.routeHref
-		items.push(
-			<li>
-				<a class={isActive ? 'active' : null} href={href}>
-					{label}
-				</a>
-			</li>
-		)
-	}
-	return { items, hasActive }
-}
-
-const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
+const PAGE_TEMPLATE = async ({ PageContent, ExtraHead, components, ctx }) => {
 	const page = ctx.page
 	const pagesByRoute = ctx.pagesByRoute
 	const pages = ctx.pages || []
 	const pagesTree = ctx.pagesTree || []
 	const siteName = ctx.site.name || 'Methanol Site'
 	const title = page.title || siteName
-	const currentRoute = page.routeHref || ''
 	const baseHref =
 		page.routeHref === '/404' || page.routeHref === '/offline' ? ctx.site.base || '/' : null
 	const toc = page.toc?.length ? renderToc(page.toc) : null
 	const hasToc = Boolean(toc)
 	const layoutClass = hasToc ? 'layout-container' : 'layout-container no-toc'
-	const tree = renderPageTree(pagesTree, currentRoute, 0)
 	const { ThemeSearchBox, ThemeColorSwitch, ThemeAccentSwitch, ThemeToCContainer } = components
 	const rootPage = pagesByRoute.get('/') || pages.find((entry) => entry.routeHref === '/')
 	const pageFrontmatter = page.frontmatter || {}
@@ -146,6 +100,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 			</div>
 		</div>
 	) : null
+
 	return (
 		<>
 			{DOCTYPE_HTML}
@@ -244,7 +199,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 								{pagefindEnabled ? <ThemeSearchBox options={pagefindOptions} /> : null}
 							</div>
 							<nav>
-								<ul data-depth="0">{...tree.items}</ul>
+								<ul data-depth="0">{renderNavTree(pagesTree, page.routePath)}</ul>
 							</nav>
 							<div class="sidebar-footer">
 								{languageSelector}
@@ -294,7 +249,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 												<span style="margin: 0 0.5rem; opacity: 0.5;">•</span>
 											</>
 										) : null}
-										Updated: {page.updatedAt || '-'}
+										Updated: {page.stats.updatedAt || '-'}
 									</div>
 									<div class="page-meta-item">
 										Powered by{' '}
