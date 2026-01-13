@@ -289,12 +289,17 @@ const resolveMdxConfigForPage = async (frontmatter) => {
 	return mdxConfig
 }
 
-export const compileMdx = async ({ content, path, ctx }) => {
-	const mdxConfig = await resolveMdxConfigForPage(ctx.page.frontmatter)
-	const runtimeFactory = mdxConfig.development ? JSXDevFactory : JSXFactory
+export const compileMdxSource = async ({ content, path, frontmatter }) => {
+	const mdxConfig = await resolveMdxConfigForPage(frontmatter)
 	const compiled = await compile({ value: content, path: path }, mdxConfig)
+	const code = String(compiled.value ?? compiled)
+	return { code, development: Boolean(mdxConfig.development) }
+}
 
-	return await run(compiled, {
+export const runMdxSource = async ({ code, path, ctx, development = null }) => {
+	const isDev = development == null ? state.CURRENT_MODE !== 'production' : development
+	const runtimeFactory = isDev ? JSXDevFactory : JSXFactory
+	return await run(code, {
 		...runtimeFactory,
 		baseUrl: pathToFileURL(path).href,
 		ctx,
@@ -302,9 +307,23 @@ export const compileMdx = async ({ content, path, ctx }) => {
 	})
 }
 
+export const compileMdx = async ({ content, path, ctx }) => {
+	const result = await compileMdxSource({
+		content,
+		path,
+		frontmatter: ctx?.page?.frontmatter || null
+	})
+	return await runMdxSource({
+		code: result.code,
+		path,
+		ctx,
+		development: result.development
+	})
+}
+
 export const compilePageMdx = async (page, pagesContext, options = {}) => {
 	if (!page || page.content == null || page.mdxComponent) return
-	const { ctx = null, lazyPagesTree = false, refreshPagesTree = true } = options || {}
+	const { ctx = null, lazyPagesTree = false, refreshPagesTree = true, compiled = null } = options || {}
 	const activeCtx =
 		ctx ||
 		buildPageContext({
@@ -314,11 +333,18 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 			pagesContext,
 			lazyPagesTree
 		})
-	const mdxModule = await compileMdx({
-		content: page.content,
-		path: page.path,
-		ctx: activeCtx
-	})
+	const mdxModule = compiled?.code
+		? await runMdxSource({
+				code: compiled.code,
+				path: page.path,
+				ctx: activeCtx,
+				development: compiled.development
+			})
+		: await compileMdx({
+				content: page.content,
+				path: page.path,
+				ctx: activeCtx
+			})
 	page.mdxComponent = mdxModule.default
 	page.toc = mdxModule.toc
 	const shouldUseTocTitle = page.frontmatter?.title == null

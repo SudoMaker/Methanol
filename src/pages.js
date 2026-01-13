@@ -22,9 +22,11 @@ import matter from 'gray-matter'
 import { readdir, readFile, stat } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve, join, relative } from 'path'
+import { cpus } from 'os'
+import { Worker } from 'worker_threads'
 import { state, cli } from './state.js'
 import { withBase } from './config.js'
-import { compilePageMdx } from './mdx.js'
+import { compileMdxSource, compilePageMdx } from './mdx.js'
 import { createStageLogger } from './stage-logger.js'
 
 const isPageFile = (name) => name.endsWith('.mdx') || name.endsWith('.md')
@@ -32,6 +34,108 @@ const isIgnoredEntry = (name) => name.startsWith('.') || name.startsWith('_')
 
 const pageMetadataCache = new Map()
 const pageDerivedCache = new Map()
+const MDX_WORKER_COUNT = Math.max(1, Math.min(cpus()?.length || 1, 4))
+const MDX_WORKER_URL = new URL('./workers/mdx-compile-worker.js', import.meta.url)
+
+const compileMdxSources = async (pages, options = {}) => {
+	const targets = pages.filter((page) => page && page.content != null && !page.mdxComponent)
+	const results = new Map()
+	if (!targets.length) return results
+	const { onProgress } = options || {}
+	const reportProgress = (page) => {
+		if (typeof onProgress === 'function') {
+			onProgress(page)
+		}
+	}
+	const workerCount = Math.min(MDX_WORKER_COUNT, targets.length)
+	if (workerCount <= 1) {
+		for (const page of targets) {
+			const result = await compileMdxSource({
+				content: page.content,
+				path: page.path,
+				frontmatter: page.frontmatter
+			})
+			results.set(page, result)
+			reportProgress(page)
+		}
+		return results
+	}
+
+	return await new Promise((resolve, reject) => {
+		const workers = []
+		const pending = new Map()
+		let cursor = 0
+		let nextId = 0
+		let finished = false
+
+		const finalize = async (error) => {
+			if (finished) return
+			finished = true
+			await Promise.all(workers.map((worker) => worker.terminate().catch(() => null)))
+			if (error) {
+				reject(error)
+				return
+			}
+			resolve(results)
+		}
+
+		const assign = (worker) => {
+			if (cursor >= targets.length) return false
+			const page = targets[cursor++]
+			const id = nextId++
+			pending.set(id, page)
+			worker.postMessage({
+				id,
+				path: page.path,
+				content: page.content,
+				frontmatter: page.frontmatter
+			})
+			return true
+		}
+
+		const handleMessage = (worker, message) => {
+			if (finished) return
+			const { id, result, error } = message || {}
+			const page = pending.get(id)
+			pending.delete(id)
+			if (!page) return
+			if (error) {
+				void finalize(new Error(error))
+				return
+			}
+			results.set(page, result)
+			reportProgress(page)
+			assign(worker)
+			if (results.size === targets.length && pending.size === 0) {
+				void finalize()
+			}
+		}
+
+		const handleError = (error) => {
+			if (finished) return
+			void finalize(error instanceof Error ? error : new Error(String(error)))
+		}
+
+		for (let i = 0; i < workerCount; i += 1) {
+			const worker = new Worker(MDX_WORKER_URL, {
+				type: 'module',
+				workerData: {
+					mode: state.CURRENT_MODE,
+					configPath: cli.CLI_CONFIG_PATH
+				}
+			})
+			workers.push(worker)
+			worker.on('message', (message) => handleMessage(worker, message))
+			worker.on('error', handleError)
+			worker.on('exit', (code) => {
+				if (code !== 0) {
+					handleError(new Error(`MDX worker exited with code ${code}`))
+				}
+			})
+			assign(worker)
+		}
+	})
+}
 
 const collectLanguagesFromPages = (pages = []) => {
 	const languages = new Map()
@@ -616,47 +720,12 @@ const buildNavSequence = (nodes, pagesByRoute) => {
 	return result
 }
 
-export const buildPagesContext = async ({ compileAll = true } = {}) => {
-	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build'
-	const stageLogger = createStageLogger(logEnabled)
-	const collectToken = stageLogger.start('Collecting pages')
-	const collected = await collectPages()
-	stageLogger.end(collectToken)
-	let pages = collected.pages
-	const excludedRoutes = collected.excludedRoutes
-	const excludedDirs = collected.excludedDirs
-	const hasIndex = pages.some((page) => page.routePath === '/')
-	if (!hasIndex) {
-		const content = buildIndexFallback(pages, state.SITE_NAME)
-		pages.unshift({
-			routePath: '/',
-			routeHref: withBase('/'),
-			path: resolve(state.PAGES_DIR, 'index.md'),
-			relativePath: 'index.md',
-			name: 'index',
-			dir: '',
-			segments: [],
-			depth: 0,
-			isIndex: true,
-			title: state.SITE_NAME || 'Methanol Site',
-			weight: null,
-			date: null,
-			isRoot: false,
-			hidden: false,
-			content,
-			frontmatter: {},
-			matter: null,
-			stats: { size: content.length, createdAt: null, updatedAt: null },
-			createdAt: null,
-			updatedAt: null
-		})
-		if (excludedRoutes?.has('/')) {
-			excludedRoutes.delete('/')
-		}
-	}
-
+export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDirs } = {}) => {
+	const pageList = Array.isArray(pages) ? pages : []
+	const routeExcludes = excludedRoutes || new Set()
+	const dirExcludes = excludedDirs || new Set()
 	const pagesByRoute = new Map()
-	for (const page of pages) {
+	for (const page of pageList) {
 		if (!pagesByRoute.has(page.routePath)) {
 			pagesByRoute.set(page.routePath, page)
 		}
@@ -703,7 +772,7 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 	}
 	let pagesTree = getPagesTree('/')
 	const notFound = pagesByRoute.get('/404') || null
-	const languages = collectLanguagesFromPages(pages)
+	const languages = collectLanguagesFromPages(pageList)
 	const userSite = state.USER_SITE || {}
 	const siteBase = state.VITE_BASE ?? userSite.base ?? null
 	const site = {
@@ -723,9 +792,9 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 		},
 		generatedAt: new Date().toISOString()
 	}
-	const excludedDirPaths = new Set(Array.from(excludedDirs).map((dir) => `/${dir}`))
+	const excludedDirPaths = new Set(Array.from(dirExcludes).map((dir) => `/${dir}`))
 	const pagesContext = {
-		pages,
+		pages: pageList,
 		pagesByRoute,
 		getPageByRoute,
 		pagesTree,
@@ -775,34 +844,96 @@ export const buildPagesContext = async ({ compileAll = true } = {}) => {
 			pagesContext.getLanguageForRoute = (routePath) =>
 				resolveLanguageForRoute(pagesContext.languages, routePath)
 		},
-		excludedRoutes,
-		excludedDirs,
+		excludedRoutes: routeExcludes,
+		excludedDirs: dirExcludes,
 		excludedDirPaths,
 		notFound,
 		languages,
 		getLanguageForRoute: (routePath) => resolveLanguageForRoute(languages, routePath),
 		site
 	}
+	return pagesContext
+}
+
+export const buildPagesContext = async ({ compileAll = true } = {}) => {
+	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build'
+	const stageLogger = createStageLogger(logEnabled)
+	const collectToken = stageLogger.start('Collecting pages')
+	const collected = await collectPages()
+	stageLogger.end(collectToken)
+	let pages = collected.pages
+	const excludedRoutes = collected.excludedRoutes
+	const excludedDirs = collected.excludedDirs
+	const hasIndex = pages.some((page) => page.routePath === '/')
+	if (!hasIndex) {
+		const content = buildIndexFallback(pages, state.SITE_NAME)
+		pages.unshift({
+			routePath: '/',
+			routeHref: withBase('/'),
+			path: resolve(state.PAGES_DIR, 'index.md'),
+			relativePath: 'index.md',
+			name: 'index',
+			dir: '',
+			segments: [],
+			depth: 0,
+			isIndex: true,
+			title: state.SITE_NAME || 'Methanol Site',
+			weight: null,
+			date: null,
+			isRoot: false,
+			hidden: false,
+			content,
+			frontmatter: {},
+			matter: null,
+			stats: { size: content.length, createdAt: null, updatedAt: null },
+			createdAt: null,
+			updatedAt: null
+		})
+		if (excludedRoutes?.has('/')) {
+			excludedRoutes.delete('/')
+		}
+	}
+
+	const pagesContext = createPagesContextFromPages({
+		pages,
+		excludedRoutes,
+		excludedDirs
+	})
 	if (compileAll) {
 		const compileToken = stageLogger.start('Compiling MDX')
-		const totalPages = pages.length
-		for (let i = 0; i < pages.length; i++) {
-			const page = pages[i]
-			if (logEnabled) {
+		const compileTargets = pages.filter((page) => page && page.content != null && !page.mdxComponent)
+		const totalPages = compileTargets.length
+		let completed = 0
+		const compiledSources = await compileMdxSources(compileTargets, {
+			onProgress: (page) => {
+				if (!logEnabled) return
+				completed += 1
 				stageLogger.update(
 					compileToken,
-					`Compiling MDX [${i + 1}/${totalPages}] ${page.routePath || page.path}`
+					`Compiling MDX [${completed}/${totalPages}] ${page.routePath || page.path}`
 				)
 			}
+		})
+		stageLogger.end(compileToken)
+		const executeToken = stageLogger.start('Running MDX')
+		completed = 0
+		for (const page of compileTargets) {
+			const compiled = compiledSources.get(page) || null
 			await compilePageMdx(page, pagesContext, {
 				lazyPagesTree: true,
-				refreshPagesTree: false
+				refreshPagesTree: false,
+				compiled
 			})
+			if (logEnabled) {
+				completed += 1
+				stageLogger.update(
+					executeToken,
+					`Running MDX [${completed}/${totalPages}] ${page.routePath || page.path}`
+				)
+			}
 		}
-		stageLogger.end(compileToken)
-		pagesTreeCache.clear()
-		pagesTree = getPagesTree('/')
-		pagesContext.pagesTree = pagesTree
+		stageLogger.end(executeToken)
+		pagesContext.refreshPagesTree?.()
 	}
 	return pagesContext
 }
