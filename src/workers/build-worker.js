@@ -22,7 +22,8 @@ import '../register-loader.js'
 import { parentPort, workerData } from 'worker_threads'
 import { style } from '../logger.js'
 
-const { mode = 'production', configPath = null, command = 'build' } = workerData || {}
+const { mode = 'production', configPath = null, command = 'build', cli: cliOverrides = null } =
+	workerData || {}
 let initPromise = null
 let pages = []
 let pagesContext = null
@@ -33,7 +34,10 @@ const ensureInit = async () => {
 	initPromise = (async () => {
 		const { loadUserConfig, applyConfig, resolveUserViteConfig } = await import('../config.js')
 		const { buildComponentRegistry } = await import('../components.js')
-		const { state } = await import('../state.js')
+		const { state, cli } = await import('../state.js')
+		if (cliOverrides) {
+			Object.assign(cli, cliOverrides)
+		}
 		const config = await loadUserConfig(mode, configPath)
 		await applyConfig(config, mode)
 		await resolveUserViteConfig(command)

@@ -213,7 +213,7 @@ const normalizeStarryNightConfig = (value) => {
 	}
 	if (typeof value !== 'object') return null
 	const { enabled, options, ...rest } = value
-	if (enabled === false) return { enabled: false, options: null }
+	if (enabled === false) return { enabled: false, options }
 	if (options && typeof options === 'object') {
 		return { enabled: true, options: { ...options } }
 	}

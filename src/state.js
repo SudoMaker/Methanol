@@ -104,14 +104,7 @@ const withCommonOptions = (y) =>
 		.option('highlight', {
 			describe: 'Enable or disable code highlighting',
 			type: 'boolean',
-			coerce: (value) => {
-				if (value == null) return null
-				if (typeof value === 'boolean') return value
-				const normalized = String(value).trim().toLowerCase()
-				if (normalized === 'true') return true
-				if (normalized === 'false') return false
-				return null
-			}
+			default: undefined
 		})
 		.option('jobs', {
 			alias: 'j',
@@ -133,12 +126,14 @@ const withCommonOptions = (y) =>
 			nargs: 1
 		})
 		.option('search', {
-			describe: 'Enable search indexing (pagefind)',
-			type: 'boolean'
+			describe: 'Enable or disable search indexing (pagefind)',
+			type: 'boolean',
+			default: undefined
 		})
 		.option('pwa', {
-			describe: 'Enable PWA support',
-			type: 'boolean'
+			describe: 'Enable or disable PWA support',
+			type: 'boolean',
+			default: undefined
 		})
 
 const parser = yargs(hideBin(process.argv))
@@ -171,8 +166,8 @@ export const cli = {
 	CLI_JOBS: typeof argv.jobs === 'number' && Number.isFinite(argv.jobs) ? argv.jobs : null,
 	CLI_VERBOSE: Boolean(argv.verbose),
 	CLI_BASE: argv.base || null,
-	CLI_SEARCH: argv.search,
-	CLI_PWA: argv.pwa
+	CLI_SEARCH: typeof argv.search === 'boolean' ? argv.search : undefined,
+	CLI_PWA: typeof argv.pwa === 'boolean' ? argv.pwa : undefined
 }
 
 export const state = {

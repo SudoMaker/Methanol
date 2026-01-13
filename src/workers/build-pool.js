@@ -23,6 +23,24 @@ import { Worker } from 'worker_threads'
 import { state, cli } from '../state.js'
 
 const BUILD_WORKER_URL = new URL('./build-worker.js', import.meta.url)
+const cliOverrides = {
+	CLI_INTERMEDIATE_DIR: cli.CLI_INTERMEDIATE_DIR,
+	CLI_EMIT_INTERMEDIATE: cli.CLI_EMIT_INTERMEDIATE,
+	CLI_HOST: cli.CLI_HOST,
+	CLI_PORT: cli.CLI_PORT,
+	CLI_PAGES_DIR: cli.CLI_PAGES_DIR,
+	CLI_COMPONENTS_DIR: cli.CLI_COMPONENTS_DIR,
+	CLI_ASSETS_DIR: cli.CLI_ASSETS_DIR,
+	CLI_OUTPUT_DIR: cli.CLI_OUTPUT_DIR,
+	CLI_CONFIG_PATH: cli.CLI_CONFIG_PATH,
+	CLI_SITE_NAME: cli.CLI_SITE_NAME,
+	CLI_CODE_HIGHLIGHTING: cli.CLI_CODE_HIGHLIGHTING,
+	CLI_JOBS: cli.CLI_JOBS,
+	CLI_VERBOSE: cli.CLI_VERBOSE,
+	CLI_BASE: cli.CLI_BASE,
+	CLI_SEARCH: cli.CLI_SEARCH,
+	CLI_PWA: cli.CLI_PWA
+}
 
 const resolveWorkerCount = (total) => {
 	const cpuCount = Math.max(1, cpus()?.length || 1)
@@ -46,7 +64,8 @@ export const createBuildWorkers = (pageCount, options = {}) => {
 				workerData: {
 					mode: state.CURRENT_MODE,
 					configPath: cli.CLI_CONFIG_PATH,
-					command
+					command,
+					cli: cliOverrides
 				}
 			})
 		)

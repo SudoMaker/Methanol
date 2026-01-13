@@ -21,7 +21,7 @@
 import '../register-loader.js'
 import { parentPort, workerData } from 'worker_threads'
 
-const { mode = 'production', configPath = null } = workerData || {}
+const { mode = 'production', configPath = null, cli: cliOverrides = null } = workerData || {}
 let initPromise = null
 let compileMdxSource = null
 
@@ -29,6 +29,10 @@ const ensureInit = async () => {
 	if (initPromise) return initPromise
 	initPromise = (async () => {
 		const { loadUserConfig, applyConfig } = await import('../config.js')
+		const { cli } = await import('../state.js')
+		if (cliOverrides) {
+			Object.assign(cli, cliOverrides)
+		}
 		const mdx = await import('../mdx.js')
 		compileMdxSource = mdx.compileMdxSource
 		const config = await loadUserConfig(mode, configPath)
