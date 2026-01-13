@@ -21,7 +21,7 @@
 import '../register-loader.js'
 import { parentPort, workerData } from 'worker_threads'
 
-const { mode = 'production', configPath = null } = workerData || {}
+const { mode = 'production', configPath = null, command = 'build' } = workerData || {}
 let initPromise = null
 let pages = []
 let pagesContext = null
@@ -35,7 +35,7 @@ const ensureInit = async () => {
 		const { state } = await import('../state.js')
 		const config = await loadUserConfig(mode, configPath)
 		await applyConfig(config, mode)
-		await resolveUserViteConfig('build')
+		await resolveUserViteConfig(command)
 		const themeComponentsDir = state.THEME_COMPONENTS_DIR
 		const themeEnv = state.THEME_ENV
 		const themeRegistry = themeComponentsDir
@@ -80,7 +80,16 @@ const handleSetPages = async (message) => {
 }
 
 const handleSyncUpdates = async (message) => {
-	const { updates = [], excludedRoutes = null, excludedDirs = null } = message || {}
+	const { updates = [], titles = null, excludedRoutes = null, excludedDirs = null } = message || {}
+	if (Array.isArray(titles)) {
+		for (let i = 0; i < titles.length; i += 1) {
+			const page = pages[i]
+			if (!page) continue
+			if (titles[i] !== undefined) {
+				page.title = titles[i]
+			}
+		}
+	}
 	for (const update of updates) {
 		const page = pages[update.id]
 		if (!page) continue

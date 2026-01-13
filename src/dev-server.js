@@ -40,6 +40,7 @@ import { buildPagesContext, buildPageEntry, routePathFromFile } from './pages.js
 import { compilePageMdx, renderHtml } from './mdx.js'
 import { methanolResolverPlugin } from './vite-plugins.js'
 import { preparePublicAssets, updateAsset } from './public-assets.js'
+import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
 
 export const runViteDev = async () => {
 	const baseFsAllow = [state.ROOT_DIR, state.USER_THEME.root].filter(Boolean)
@@ -156,15 +157,118 @@ export const runViteDev = async () => {
 		setPagesContext(await buildPagesContext({ compileAll: false }))
 	}
 
+	const prebuildHtmlCache = async (token) => {
+		if (!pagesContext || token !== pagesContextToken) return
+		const pages = pagesContext.pages || []
+		if (!pages.length) return
+		const { workers, assignments } = createBuildWorkers(pages.length, { command: 'serve' })
+		const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
+		const excludedDirs = Array.from(pagesContext.excludedDirs || [])
+		try {
+			await runWorkerStage({
+				workers,
+				stage: 'setPages',
+				messages: workers.map((worker) => ({
+					worker,
+					message: {
+						type: 'setPages',
+						stage: 'setPages',
+						pages,
+						excludedRoutes,
+						excludedDirs
+					}
+				}))
+			})
+			if (token !== pagesContextToken) return
+
+			const updates = await runWorkerStage({
+				workers,
+				stage: 'compile',
+				messages: workers.map((worker, index) => ({
+					worker,
+					message: {
+						type: 'compile',
+						stage: 'compile',
+						ids: assignments[index]
+					}
+				})),
+				collect: (message) => message.updates || []
+			})
+			if (token !== pagesContextToken) return
+
+			for (const update of updates) {
+				const page = pages[update.id]
+				if (!page) continue
+				if (update.title !== undefined) page.title = update.title
+				if (update.toc !== undefined) page.toc = update.toc
+				if (typeof pagesContext.setDerivedTitle === 'function') {
+					const shouldUseTocTitle = page.frontmatter?.title == null
+					pagesContext.setDerivedTitle(page.path, shouldUseTocTitle ? page.title : null, page.toc || null)
+				}
+			}
+			pagesContext.refreshPagesTree?.()
+			invalidateHtmlCache()
+			const renderEpoch = htmlCacheEpoch
+
+			const titleSnapshot = pages.map((page) => page.title)
+			await runWorkerStage({
+				workers,
+				stage: 'sync',
+				messages: workers.map((worker) => ({
+					worker,
+					message: {
+						type: 'sync',
+						stage: 'sync',
+						updates,
+						titles: titleSnapshot
+					}
+				}))
+			})
+			if (token !== pagesContextToken) return
+
+			const rendered = await runWorkerStage({
+				workers,
+				stage: 'render',
+				messages: workers.map((worker, index) => ({
+					worker,
+					message: {
+						type: 'render',
+						stage: 'render',
+						ids: assignments[index]
+					}
+				})),
+				collect: (message) => message.results || []
+			})
+			if (token !== pagesContextToken || renderEpoch !== htmlCacheEpoch) return
+			for (const item of rendered) {
+				const page = pages[item.id]
+				if (!page) continue
+				htmlCache.set(page.routePath, {
+					html: item.html,
+					path: page.path,
+					epoch: renderEpoch,
+					token
+				})
+			}
+		} finally {
+			await terminateWorkers(workers)
+		}
+	}
+
 	const runInitialCompile = async () => {
 		const token = pagesContextToken
 		try {
-			const nextContext = await buildPagesContext({ compileAll: true })
+			const nextContext = await buildPagesContext({ compileAll: false })
 			if (token !== pagesContextToken) {
 				return
 			}
 			setPagesContext(nextContext)
+			const nextToken = pagesContextToken
 			invalidateHtmlCache()
+			await prebuildHtmlCache(nextToken)
+			if (nextToken !== pagesContextToken) {
+				return
+			}
 			reload()
 		} catch (err) {
 			console.error(err)
@@ -348,7 +452,12 @@ export const runViteDev = async () => {
 		try {
 			const renderEpoch = htmlCacheEpoch
 			const cacheEntry = htmlCache.get(renderRoutePath)
-			if (cacheEntry && cacheEntry.path === path && cacheEntry.epoch === htmlCacheEpoch) {
+			if (
+				cacheEntry &&
+				cacheEntry.path === path &&
+				cacheEntry.epoch === htmlCacheEpoch &&
+				cacheEntry.token === pagesContextToken
+			) {
 				res.statusCode = status
 				res.setHeader('Content-Type', 'text/html')
 				res.end(cacheEntry.html)
@@ -371,7 +480,8 @@ export const runViteDev = async () => {
 				htmlCache.set(renderRoutePath, {
 					html,
 					path,
-					epoch: renderEpoch
+					epoch: renderEpoch,
+					token: pagesContextToken
 				})
 			}
 			res.statusCode = status

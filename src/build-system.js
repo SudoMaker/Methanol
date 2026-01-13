@@ -21,21 +21,19 @@
 import { writeFile, mkdir, rm, readFile, readdir, stat } from 'fs/promises'
 import { resolve, dirname, join } from 'path'
 import { fileURLToPath } from 'url'
-import { cpus } from 'os'
-import { Worker } from 'worker_threads'
 import { build as viteBuild, mergeConfig, normalizePath } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { state, cli } from './state.js'
 import { resolveUserViteConfig } from './config.js'
 import { buildPagesContext } from './pages.js'
 import { buildComponentRegistry } from './components.js'
+import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
 import { methanolVirtualHtmlPlugin, methanolResolverPlugin } from './vite-plugins.js'
 import { createStageLogger } from './stage-logger.js'
 import { preparePublicAssets } from './public-assets.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
-const BUILD_WORKER_URL = new URL('./workers/build-worker.js', import.meta.url)
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
@@ -64,112 +62,6 @@ const collectHtmlFiles = async (dir, basePath = '') => {
 		files.push({ fullPath, relativePath })
 	}
 	return files
-}
-
-const resolveWorkerCount = (total) => {
-	const cpuCount = Math.max(1, cpus()?.length || 1)
-	const requested = state.WORKER_JOBS
-	if (requested == null || requested <= 0) {
-		const items = Math.max(1, Number.isFinite(total) ? total : 1)
-		const autoCount = Math.round(Math.log(items))
-		return Math.max(1, Math.min(cpuCount, autoCount))
-	}
-	return Math.max(1, Math.min(cpuCount, Math.floor(requested)))
-}
-
-const createBuildWorkers = (pageCount) => {
-	const workerCount = Math.min(resolveWorkerCount(pageCount), pageCount || 1) || 1
-	const workers = []
-	for (let i = 0; i < workerCount; i += 1) {
-		workers.push(
-			new Worker(BUILD_WORKER_URL, {
-				type: 'module',
-				workerData: {
-					mode: state.CURRENT_MODE,
-					configPath: cli.CLI_CONFIG_PATH
-				}
-			})
-		)
-	}
-	const assignments = Array.from({ length: workers.length }, () => [])
-	for (let i = 0; i < pageCount; i += 1) {
-		assignments[i % workers.length].push(i)
-	}
-	return { workers, assignments }
-}
-
-const runWorkerStage = async ({ workers, stage, messages, onProgress, collect }) => {
-	return await new Promise((resolve, reject) => {
-		let completed = 0
-		let doneCount = 0
-		const results = []
-		const handleFailure = (error) => {
-			for (const w of workers) {
-				const handler = handlers.get(w)
-				if (handler) {
-					w.off('message', handler)
-					w.off('error', errorHandlers.get(w))
-					w.off('exit', exitHandlers.get(w))
-				}
-			}
-			reject(error instanceof Error ? error : new Error(String(error)))
-		}
-		const handleMessage = (worker, message) => {
-			if (!message || message.stage !== stage) return
-			if (message.type === 'progress') {
-				completed += 1
-				if (onProgress) {
-					onProgress(completed)
-				}
-				return
-			}
-			if (message.type === 'done') {
-				if (collect) {
-					const data = collect(message)
-					if (Array.isArray(data) && data.length) {
-						results.push(...data)
-					}
-				}
-				doneCount += 1
-				if (doneCount >= workers.length) {
-					for (const w of workers) {
-						const handler = handlers.get(w)
-						if (handler) {
-							w.off('message', handler)
-							w.off('error', errorHandlers.get(w))
-							w.off('exit', exitHandlers.get(w))
-						}
-					}
-					resolve(results)
-				}
-				return
-			}
-			if (message.type === 'error') {
-				handleFailure(new Error(message.error || 'Worker error'))
-			}
-		}
-		const handlers = new Map()
-		const errorHandlers = new Map()
-		const exitHandlers = new Map()
-		for (const worker of workers) {
-			const handler = (message) => handleMessage(worker, message)
-			handlers.set(worker, handler)
-			worker.on('message', handler)
-			const errorHandler = (error) => handleFailure(error)
-			const exitHandler = (code) => {
-				if (code !== 0) {
-					handleFailure(new Error(`Build worker exited with code ${code}`))
-				}
-			}
-			errorHandlers.set(worker, errorHandler)
-			exitHandlers.set(worker, exitHandler)
-			worker.on('error', errorHandler)
-			worker.on('exit', exitHandler)
-		}
-		for (const entry of messages) {
-			entry.worker.postMessage(entry.message)
-		}
-	})
 }
 
 export const buildHtmlEntries = async () => {
@@ -206,9 +98,6 @@ export const buildHtmlEntries = async () => {
 	const { workers, assignments } = createBuildWorkers(totalPages)
 	const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
 	const excludedDirs = Array.from(pagesContext.excludedDirs || [])
-	const cleanupWorkers = async () => {
-		await Promise.all(workers.map((worker) => worker.terminate().catch(() => null)))
-	}
 	try {
 		await runWorkerStage({
 			workers,
@@ -259,6 +148,7 @@ export const buildHtmlEntries = async () => {
 		}
 		pagesContext.refreshPagesTree?.()
 
+		const titleSnapshot = pages.map((page) => page.title)
 		await runWorkerStage({
 			workers,
 			stage: 'sync',
@@ -267,7 +157,8 @@ export const buildHtmlEntries = async () => {
 				message: {
 					type: 'sync',
 					stage: 'sync',
-					updates
+					updates,
+					titles: titleSnapshot
 				}
 			}))
 		})
@@ -309,7 +200,7 @@ export const buildHtmlEntries = async () => {
 			}
 		}
 	} finally {
-		await cleanupWorkers()
+		await terminateWorkers(workers)
 	}
 
 	const htmlFiles = await collectHtmlFiles(state.PAGES_DIR)
