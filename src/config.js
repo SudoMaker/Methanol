@@ -191,12 +191,12 @@ const resolvePagefindBuild = (config) => {
 }
 
 const resolveStarryNightConfig = (value) => {
-	if (value == null) return { enabled: false, options: null }
+	if (value == null) return { enabled: true, options: null }
 	if (typeof value === 'boolean') {
 		return { enabled: value, options: null }
 	}
 	if (typeof value !== 'object') {
-		return { enabled: false, options: null }
+		return { enabled: true, options: null }
 	}
 	const { enabled, options, ...rest } = value
 	if (enabled === false) return { enabled: false, options: null }

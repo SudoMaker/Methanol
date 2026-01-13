@@ -41,7 +41,7 @@ export default () => ({
 		enabled: true
 	},
 
-	// optional: code highlighting (Starry Night)
+	// optional: code highlighting (Starry Night, default: enabled)
 	starryNight: false,
 
 	// optional: pwa support
