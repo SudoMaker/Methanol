@@ -79,11 +79,12 @@ const NavTree = ({ nodes, depth }) => (
 					<li class={isActive.choose('is-active', null)}>
 						<details class="sidebar-collapsible" open={isOpen.choose(true, null)}>
 							<summary class="sb-dir-header">{header}</summary>
-							<If condition={() => children.value.length}>{() => (
-								<ul data-depth={depth + 1}>
-									<NavTree nodes={children} depth={depth + 1} />
-								</ul>
-							)}
+							<If condition={() => children.value.length}>
+								{() => (
+									<ul data-depth={depth + 1}>
+										<NavTree nodes={children} depth={depth + 1} />
+									</ul>
+								)}
 							</If>
 						</details>
 					</li>

@@ -41,6 +41,7 @@ import { compilePageMdx, renderHtml } from './mdx.js'
 import { methanolResolverPlugin } from './vite-plugins.js'
 import { preparePublicAssets, updateAsset } from './public-assets.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
+import { style } from './logger.js'
 
 export const runViteDev = async () => {
 	const baseFsAllow = [state.ROOT_DIR, state.USER_THEME.root].filter(Boolean)
@@ -151,6 +152,12 @@ export const runViteDev = async () => {
 	const invalidateHtmlCache = () => {
 		htmlCacheEpoch += 1
 		htmlCache.clear()
+	}
+
+	const logMdxError = (phase, error, page = null) => {
+		const target = page?.path || page?.routePath || 'unknown file'
+		console.error(style.red(`\n[methanol] ${phase} error in ${target}`))
+		console.error(error?.stack || error)
 	}
 
 	const refreshPagesContext = async () => {
@@ -466,16 +473,24 @@ export const runViteDev = async () => {
 
 			pageMeta ??= pagesContext.getPageByRoute(renderRoutePath, { path })
 
-			const html = await renderHtml({
-				routePath: renderRoutePath,
-				path,
-				components: {
-					...themeComponents,
-					...components
-				},
-				pagesContext,
-				pageMeta
-			})
+			let html = ''
+			try {
+				html = await renderHtml({
+					routePath: renderRoutePath,
+					path,
+					components: {
+						...themeComponents,
+						...components
+					},
+					pagesContext,
+					pageMeta
+				})
+			} catch (err) {
+				logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
+				res.statusCode = 500
+				res.end('Internal Server Error')
+				return
+			}
 			if (renderEpoch === htmlCacheEpoch) {
 				htmlCache.set(renderRoutePath, {
 					html,
@@ -488,7 +503,7 @@ export const runViteDev = async () => {
 			res.setHeader('Content-Type', 'text/html')
 			res.end(html)
 		} catch (err) {
-			console.error(err)
+			logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
 			res.statusCode = 500
 			res.end('Internal Server Error')
 		}
@@ -643,12 +658,17 @@ export const runViteDev = async () => {
 		pagesContext.refreshPagesTree?.()
 		pagesContext.refreshLanguages?.()
 		if (prevEntry.content && prevEntry.content.trim().length) {
-			await compilePageMdx(prevEntry, pagesContext, {
-				lazyPagesTree: true,
-				refreshPagesTree: false
-			})
-			// Avoid caching a potentially stale render; recompile on request.
-			prevEntry.mdxComponent = null
+			try {
+				await compilePageMdx(prevEntry, pagesContext, {
+					lazyPagesTree: true,
+					refreshPagesTree: false
+				})
+				// Avoid caching a potentially stale render; recompile on request.
+				prevEntry.mdxComponent = null
+			} catch (err) {
+				logMdxError('MDX compile', err, prevEntry)
+				prevEntry.mdxComponent = null
+			}
 		}
 		return true
 	}

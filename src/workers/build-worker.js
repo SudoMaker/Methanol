@@ -20,6 +20,7 @@
 
 import '../register-loader.js'
 import { parentPort, workerData } from 'worker_threads'
+import { style } from '../logger.js'
 
 const { mode = 'production', configPath = null, command = 'build' } = workerData || {}
 let initPromise = null
@@ -73,6 +74,13 @@ const serializeError = (error) => {
 	return String(error)
 }
 
+const logPageError = (phase, page, error) => {
+	const target = page?.path || page?.routePath || 'unknown file'
+	console.error(style.red(`\n\n[methanol] ${phase} error in ${target}`))
+	// Error is thrown so wo don't need to print here
+	// console.error(error?.stack || error)
+}
+
 const handleSetPages = async (message) => {
 	const { pages: nextPages, excludedRoutes = [], excludedDirs = [] } = message || {}
 	pages = Array.isArray(nextPages) ? nextPages : []
@@ -114,11 +122,16 @@ const handleCompile = async (message) => {
 			parentPort?.postMessage({ type: 'progress', stage, completed })
 			continue
 		}
-		await compilePageMdx(page, pagesContext, {
-			lazyPagesTree: true,
-			refreshPagesTree: false
-		})
-		updates.push({ id, title: page.title, toc: page.toc || null })
+		try {
+			await compilePageMdx(page, pagesContext, {
+				lazyPagesTree: true,
+				refreshPagesTree: false
+			})
+			updates.push({ id, title: page.title, toc: page.toc || null })
+		} catch (error) {
+			logPageError('MDX compile', page, error)
+			throw error
+		}
 		completed += 1
 		parentPort?.postMessage({ type: 'progress', stage, completed })
 	}
@@ -137,14 +150,19 @@ const handleRender = async (message) => {
 			parentPort?.postMessage({ type: 'progress', stage, completed })
 			continue
 		}
-		const html = await renderHtml({
-			routePath: page.routePath,
-			path: page.path,
-			components,
-			pagesContext,
-			pageMeta: page
-		})
-		results.push({ id, html })
+		try {
+			const html = await renderHtml({
+				routePath: page.routePath,
+				path: page.path,
+				components,
+				pagesContext,
+				pageMeta: page
+			})
+			results.push({ id, html })
+		} catch (error) {
+			logPageError('MDX render', page, error)
+			throw error
+		}
 		completed += 1
 		parentPort?.postMessage({ type: 'progress', stage, completed })
 	}

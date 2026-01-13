@@ -18,10 +18,22 @@
  * under the License.
  */
 
+const resolveSupportColor = (stream) => {
+	if (typeof process === 'undefined') return false
+	const env = process.env || {}
+	if (env.NO_COLOR != null) return false
+	const force = env.FORCE_COLOR
+	if (force != null) {
+		return force !== '0'
+	}
+	if (stream && stream.isTTY) return true
+	const term = env.TERM || ''
+	if (!term || term.toLowerCase() === 'dumb') return false
+	return true
+}
+
 const supportColor =
-	typeof process !== 'undefined' &&
-	process.stdout &&
-	(process.stdout.isTTY || process.env.FORCE_COLOR)
+	resolveSupportColor(process.stdout) || resolveSupportColor(process.stderr)
 
 const formatter = (open, close, replace = open) =>
 	supportColor

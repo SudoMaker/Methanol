@@ -131,9 +131,7 @@ const resolvePageHeadAssets = (page) => {
 export const buildPageContext = ({ routePath, path, pageMeta, pagesContext, lazyPagesTree = false }) => {
 	const page = pageMeta
 	const language = pagesContext.getLanguageForRoute ? pagesContext.getLanguageForRoute(routePath) : null
-	const getSiblings = pagesContext.getSiblings
-		? () => pagesContext.getSiblings(routePath, page.path || path)
-		: null
+	const getSiblings = pagesContext.getSiblings ? () => pagesContext.getSiblings(routePath, page.path || path) : null
 	if (page && getSiblings && page.getSiblings !== getSiblings) {
 		page.getSiblings = getSiblings
 	}
@@ -372,41 +370,46 @@ export const renderHtml = async ({ routePath, path, components, pagesContext, pa
 		pageMeta,
 		pagesContext
 	})
+
 	await compilePageMdx(pageMeta, pagesContext, { ctx })
 
-	const [Head, Outlet] = createPortal()
-	const ExtraHead = () => {
-		return [
-			resolveRewindInject(),
-			...resolveUserHeadAssets(),
-			...resolvePageHeadAssets(pageMeta),
-			Outlet(),
-			RWND_FALLBACK
-		]
-	}
-
+	const template = state.USER_THEME.template
 	const mdxComponent = pageMeta.mdxComponent
 
-	const PageContent = ({ components: extraComponents, ...props }, ...children) =>
-		mdxComponent({
-			children,
-			...props,
-			components: {
-				...components,
-				...extraComponents,
-				head: Head,
-				Head
+	const renderResult = await new Promise((resolve, reject) => {
+		const [Head, Outlet] = createPortal()
+		const ExtraHead = () => {
+			return [
+				resolveRewindInject(),
+				...resolveUserHeadAssets(),
+				...resolvePageHeadAssets(pageMeta),
+				Outlet(),
+				RWND_FALLBACK
+			]
+		}
+
+		const PageContent = ({ components: extraComponents, ...props }, ...children) => {
+			try {
+				return mdxComponent({
+					children,
+					...props,
+					components: {
+						...components,
+						...extraComponents,
+						head: Head,
+						Head
+					}
+				})
+			} catch (e) {
+				reject(e)
 			}
-		})
+		}
 
-	const template = state.USER_THEME.template
-
-	const renderResult = await new Promise((r) => {
 		const result = HTMLRenderer.c(
 			Suspense,
 			{
 				onLoad() {
-					nextTick(() => r(result))
+					nextTick(() => resolve(result))
 				}
 			},
 			() =>
