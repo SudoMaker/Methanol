@@ -257,10 +257,6 @@ export const runViteDev = async () => {
 			return next()
 		}
 
-		if (pathname.includes('.') && !pathname.endsWith('.html')) {
-			return next()
-		}
-
 		const accept = req.headers.accept || ''
 		if (!pathname.endsWith('.html') && !accept.includes('text/html')) {
 			return next()
@@ -274,6 +270,11 @@ export const runViteDev = async () => {
 			}
 		}
 		const requestedPath = routePath
+		if (pathname.includes('.') && !pathname.endsWith('.html')) {
+			if (!pagesContext?.pagesByRoute?.has(requestedPath)) {
+				return next()
+			}
+		}
 		const isExcludedPath = () => {
 			const excludedRoutes = pagesContext.excludedRoutes
 			if (excludedRoutes?.has(requestedPath)) return true
