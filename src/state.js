@@ -113,6 +113,13 @@ const withCommonOptions = (y) =>
 				return null
 			}
 		})
+		.option('jobs', {
+			alias: 'j',
+			describe: 'Worker thread count (0 for auto)',
+			type: 'number',
+			requiresArg: true,
+			nargs: 1
+		})
 		.option('verbose', {
 			alias: 'v',
 			describe: 'Enable verbose output',
@@ -161,6 +168,7 @@ export const cli = {
 	CLI_CONFIG_PATH: argv.config || null,
 	CLI_SITE_NAME: argv['site-name'] || null,
 	CLI_CODE_HIGHLIGHTING: typeof argv.highlight === 'boolean' ? argv.highlight : null,
+	CLI_JOBS: typeof argv.jobs === 'number' && Number.isFinite(argv.jobs) ? argv.jobs : null,
 	CLI_VERBOSE: Boolean(argv.verbose),
 	CLI_BASE: argv.base || null,
 	CLI_SEARCH: argv.search,
@@ -204,6 +212,7 @@ export const state = {
 	THEME_POST_BUNDLE_HOOKS: [],
 	STARRY_NIGHT_ENABLED: false,
 	STARRY_NIGHT_OPTIONS: null,
+	WORKER_JOBS: 0,
 	GFM_ENABLED: true,
 	PWA_ENABLED: false,
 	PWA_OPTIONS: null,

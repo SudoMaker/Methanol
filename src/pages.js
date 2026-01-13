@@ -34,8 +34,18 @@ const isIgnoredEntry = (name) => name.startsWith('.') || name.startsWith('_')
 
 const pageMetadataCache = new Map()
 const pageDerivedCache = new Map()
-const MDX_WORKER_COUNT = Math.max(1, Math.min(cpus()?.length || 1, 4))
 const MDX_WORKER_URL = new URL('./workers/mdx-compile-worker.js', import.meta.url)
+
+const resolveWorkerCount = (total) => {
+	const cpuCount = Math.max(1, cpus()?.length || 1)
+	const requested = state.WORKER_JOBS
+	if (requested == null || requested <= 0) {
+		const items = Math.max(1, Number.isFinite(total) ? total : 1)
+		const autoCount = Math.round(Math.log(items))
+		return Math.max(1, Math.min(cpuCount, autoCount))
+	}
+	return Math.max(1, Math.min(cpuCount, Math.floor(requested)))
+}
 
 const compileMdxSources = async (pages, options = {}) => {
 	const targets = pages.filter((page) => page && page.content != null && !page.mdxComponent)
@@ -47,7 +57,7 @@ const compileMdxSources = async (pages, options = {}) => {
 			onProgress(page)
 		}
 	}
-	const workerCount = Math.min(MDX_WORKER_COUNT, targets.length)
+	const workerCount = Math.min(resolveWorkerCount(targets.length), targets.length)
 	if (workerCount <= 1) {
 		for (const page of targets) {
 			const result = await compileMdxSource({

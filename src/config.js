@@ -216,6 +216,14 @@ const normalizeHooks = (value) => {
 	return []
 }
 
+const normalizeJobs = (value) => {
+	if (value == null) return null
+	const parsed = Number(value)
+	if (!Number.isFinite(parsed)) return null
+	if (parsed <= 0) return 0
+	return Math.floor(parsed)
+}
+
 const loadConfigModule = async (filePath) => {
 	return import(`${pathToFileURL(filePath).href}?t=${Date.now()}`)
 }
@@ -424,6 +432,9 @@ export const applyConfig = async (config, mode) => {
 		state.STARRY_NIGHT_ENABLED = starryNight.enabled
 		state.STARRY_NIGHT_OPTIONS = starryNight.enabled ? starryNight.options : null
 	}
+
+	const jobsValue = cli.CLI_JOBS != null ? cli.CLI_JOBS : config.jobs
+	state.WORKER_JOBS = normalizeJobs(jobsValue) ?? 0
 
 	if (cli.CLI_INTERMEDIATE_DIR) {
 		state.INTERMEDIATE_DIR = resolveFromRoot(root, cli.CLI_INTERMEDIATE_DIR, 'build')

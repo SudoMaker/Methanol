@@ -36,7 +36,6 @@ import { preparePublicAssets } from './public-assets.js'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 const BUILD_WORKER_URL = new URL('./workers/build-worker.js', import.meta.url)
-const BUILD_WORKER_COUNT = Math.max(1, Math.min(cpus()?.length || 1, 4))
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
@@ -67,8 +66,19 @@ const collectHtmlFiles = async (dir, basePath = '') => {
 	return files
 }
 
+const resolveWorkerCount = (total) => {
+	const cpuCount = Math.max(1, cpus()?.length || 1)
+	const requested = state.WORKER_JOBS
+	if (requested == null || requested <= 0) {
+		const items = Math.max(1, Number.isFinite(total) ? total : 1)
+		const autoCount = Math.round(Math.log(items))
+		return Math.max(1, Math.min(cpuCount, autoCount))
+	}
+	return Math.max(1, Math.min(cpuCount, Math.floor(requested)))
+}
+
 const createBuildWorkers = (pageCount) => {
-	const workerCount = Math.min(BUILD_WORKER_COUNT, pageCount || 1) || 1
+	const workerCount = Math.min(resolveWorkerCount(pageCount), pageCount || 1) || 1
 	const workers = []
 	for (let i = 0; i < workerCount; i += 1) {
 		workers.push(

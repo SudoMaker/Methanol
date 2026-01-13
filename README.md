@@ -44,6 +44,9 @@ export default () => ({
 	// optional: code highlighting (Starry Night, default: enabled)
 	starryNight: false,
 
+	// optional: worker thread count (0 = auto)
+	jobs: 0,
+
 	// optional: pwa support
 	pwa: true,
 
