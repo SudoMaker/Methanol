@@ -59,4 +59,3 @@
 	}
 	document.addEventListener('pointerover', onHover, { capture: true, passive: true })
 })
-console.log('theme prep')
