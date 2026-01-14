@@ -40,16 +40,9 @@ import { linkResolve } from './rehype-plugins/link-resolve.js'
 // Workaround for Vite: it doesn't support resolving module/virtual modules in script src in dev mode
 const resolveRewindInject = () =>
 	HTMLRenderer.rawHTML(`<script type="module" src="${withBase('/.methanol_virtual_module/inject.js')}"></script>`)
-const RWND_FALLBACK = HTMLRenderer.rawHTML`<script>
-	if (!window.$$rfrm) {
-		const l = []
-		const r = function(k,i,p) {
-			l.push([k,i,p,document.currentScript])
-		}
-		r.$$loaded = l
-		window.$$rfrm = r
-	}
-</script>`
+const RWND_FALLBACK = HTMLRenderer.rawHTML(
+	'<script>if(!window.$$rfrm){var l=[];var r=function(k,i,p){l.push([k,i,p,document.currentScript])};r.$$loaded=l;window.$$rfrm=r}</script>'
+)
 
 let cachedHeadAssets = null
 
@@ -331,6 +324,7 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 			pagesContext,
 			lazyPagesTree
 		})
+	page.mdxCtx = activeCtx
 	const mdxModule = compiled?.code
 		? await runMdxSource({
 				code: compiled.code,
@@ -373,55 +367,52 @@ export const renderHtml = async ({ routePath, path, components, pagesContext, pa
 
 	await compilePageMdx(pageMeta, pagesContext, { ctx })
 
+	const [Head, Outlet] = createPortal()
+	const ExtraHead = () => {
+		return [
+			resolveRewindInject(),
+			...resolveUserHeadAssets(),
+			...resolvePageHeadAssets(pageMeta),
+			Outlet(),
+			RWND_FALLBACK
+		]
+	}
+
+	const PageContent = ({ components: extraComponents, ...props }, ...children) =>
+		mdxComponent({
+			children,
+			...props,
+			components: {
+				...components,
+				...extraComponents,
+				head: Head,
+				Head
+			}
+		})
+
 	const template = state.USER_THEME.template
 	const mdxComponent = pageMeta.mdxComponent
 
 	const renderResult = await new Promise((resolve, reject) => {
-		const [Head, Outlet] = createPortal()
-		const ExtraHead = () => {
-			return [
-				resolveRewindInject(),
-				...resolveUserHeadAssets(),
-				...resolvePageHeadAssets(pageMeta),
-				Outlet(),
-				RWND_FALLBACK
-			]
-		}
-
-		const PageContent = ({ components: extraComponents, ...props }, ...children) => {
-			try {
-				return mdxComponent({
-					children,
-					...props,
-					components: {
-						...components,
-						...extraComponents,
-						head: Head,
-						Head
-					}
-				})
-			} catch (e) {
-				reject(e)
-			}
-		}
-
 		const result = HTMLRenderer.c(
 			Suspense,
 			{
 				onLoad() {
 					nextTick(() => resolve(result))
+				},
+				catch({ error }) {
+					reject(error)
 				}
 			},
-			() =>
-				template({
-					ctx,
-					page: ctx.page,
-					withBase,
-					PageContent,
-					ExtraHead,
-					HTMLRenderer,
-					components
-				})
+			template({
+				ctx,
+				page: ctx.page,
+				withBase,
+				PageContent,
+				ExtraHead,
+				HTMLRenderer,
+				components
+			})
 		)
 	})
 

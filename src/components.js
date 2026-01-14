@@ -48,21 +48,24 @@ export const bumpComponentImportNonce = () => {
 }
 
 export const reframeEnv = env()
-export const client = reframeEnv.client
+export const register = reframeEnv.register
 export const invalidateRegistryEntry = reframeEnv.invalidate
 export const genRegistryScript = reframeEnv.genRegistryScript
 
-const resolveComponentExport = (componentPath, ext) => {
+const resolveComponentExport = (componentPath, exportName, ext) => {
 	const staticCandidate = `${componentPath}.static${ext}`
 	const clientCandidate = `${componentPath}.client${ext}`
 	const genericCandidate = `${componentPath}${ext}`
-	const ret = {}
+	const ret = { exportName }
+
 	if (existsSync(staticCandidate)) {
 		ret.staticPath = staticCandidate
 	}
+
 	if (existsSync(clientCandidate)) {
 		ret.clientPath = clientCandidate
 	}
+
 	if (!ret.staticPath) {
 		if (existsSync(genericCandidate)) {
 			ret.staticPath = genericCandidate
@@ -70,34 +73,29 @@ const resolveComponentExport = (componentPath, ext) => {
 			ret.staticPath = clientCandidate
 		}
 	}
+
+	if (ret.staticPath) {
+		ret.staticImportURL = `${pathToFileURL(ret.staticPath).href}?t=${componentImportNonce}`
+	}
+
 	return ret
 }
 
-export const buildComponentEntry = async ({ dir, exportName, ext, client: clientFn = client }) => {
-	const info = resolveComponentExport(join(dir, exportName), ext)
+export const buildComponentEntry = async ({ dir, exportName, ext, register: registerFn = register }) => {
+	const info = resolveComponentExport(join(dir, exportName), exportName, ext)
 	if (!info.staticPath) {
 		return { component: null, hasClient: false, staticPath: null, clientPath: null }
 	}
 
-	let component = (await import(`${pathToFileURL(info.staticPath).href}?t=${componentImportNonce}`)).default
-
-	if (!component) {
-		return { component: null, hasClient: false, staticPath: null, clientPath: null }
-	}
-
-	if (info.clientPath) {
-		component = clientFn({ ...info, staticComponent: component, exportName })
-	}
-
 	return {
-		component,
+		component: registerFn(info),
 		hasClient: Boolean(info.clientPath),
 		staticPath: info.staticPath,
 		clientPath: info.clientPath || null
 	}
 }
 
-export const buildComponentRegistry = async ({ componentsDir = state.COMPONENTS_DIR, client: clientFn = client } = {}) => {
+export const buildComponentRegistry = async ({ componentsDir = state.COMPONENTS_DIR, register: registerFn = register } = {}) => {
 	const components = {}
 	const sources = new Map()
 
@@ -130,7 +128,7 @@ export const buildComponentRegistry = async ({ componentsDir = state.COMPONENTS_
 				dir,
 				exportName,
 				ext: extname(entry),
-				client: clientFn
+				register: registerFn
 			})
 			if (!component) continue
 			components[exportName] = component

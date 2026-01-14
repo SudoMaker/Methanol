@@ -2,7 +2,7 @@
 
 Opinionated MDX-first static site generator powered by rEFui + Vite.
 
-For full documentation and examples, visit [Methanol Docs](https://methanol.netlify.app/).
+For full documentation and examples, visit [Methanol Docs](https://methanol.sudomaker.com/).
 
 ## Quick start
 

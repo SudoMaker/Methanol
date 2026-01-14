@@ -18,6 +18,6 @@
  * under the License.
  */
 
-export default function () {
-	// render nothing on server side
-}
+// Nothing needs to be rendered on the server side for accent switch
+// But we explicitly need to keep a file here to prevent Methanol from
+// rendering the client version as fallback

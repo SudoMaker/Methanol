@@ -46,7 +46,7 @@ const ensureInit = async () => {
 		const themeRegistry = themeComponentsDir
 			? await buildComponentRegistry({
 					componentsDir: themeComponentsDir,
-					client: themeEnv.client
+					register: themeEnv.register
 				})
 			: { components: {} }
 		const themeComponents = {
@@ -69,6 +69,30 @@ const rebuildPagesContext = async (excludedRoutes, excludedDirs) => {
 		excludedRoutes,
 		excludedDirs
 	})
+}
+
+const refreshMdxCtx = (page) => {
+	if (!page?.mdxCtx || !pagesContext) return
+	const ctx = page.mdxCtx
+	ctx.page = page
+	ctx.pages = pagesContext.pages || []
+	ctx.pagesByRoute = pagesContext.pagesByRoute || new Map()
+	ctx.languages = pagesContext.languages || []
+	ctx.language = pagesContext.getLanguageForRoute
+		? pagesContext.getLanguageForRoute(page.routePath)
+		: null
+	ctx.site = pagesContext.site || null
+	ctx.getSiblings = pagesContext.getSiblings
+		? () => pagesContext.getSiblings(page.routePath, page.path)
+		: null
+	if (page && ctx.getSiblings && page.getSiblings !== ctx.getSiblings) {
+		page.getSiblings = ctx.getSiblings
+	}
+	if (pagesContext.getPagesTree) {
+		ctx.pagesTree = pagesContext.getPagesTree(page.routePath)
+	} else {
+		ctx.pagesTree = pagesContext.pagesTree || []
+	}
 }
 
 const serializeError = (error) => {
@@ -112,6 +136,10 @@ const handleSyncUpdates = async (message) => {
 		excludedRoutes ? new Set(excludedRoutes) : pagesContext?.excludedRoutes || new Set(),
 		excludedDirs ? new Set(excludedDirs) : pagesContext?.excludedDirs || new Set()
 	)
+	for (const page of pages) {
+		if (!page?.mdxCtx) continue
+		refreshMdxCtx(page)
+	}
 }
 
 const handleCompile = async (message) => {

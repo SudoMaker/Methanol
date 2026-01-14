@@ -78,7 +78,7 @@ export const buildHtmlEntries = async () => {
 	if (themeComponentsDir) {
 		await buildComponentRegistry({
 			componentsDir: themeComponentsDir,
-			client: themeEnv.client
+			register: themeEnv.register
 		})
 	}
 	await buildComponentRegistry()

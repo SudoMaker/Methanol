@@ -22,7 +22,7 @@ import { HTMLRenderer as R, DOCTYPE_HTML } from 'methanol'
 import { renderToc } from '../components/ThemeToCContainer.static.jsx'
 import { renderNavTree } from './nav-tree.jsx'
 
-const PAGE_TEMPLATE = async ({ PageContent, ExtraHead, components, ctx }) => {
+const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 	const page = ctx.page
 	const pagesByRoute = ctx.pagesByRoute
 	const pages = ctx.pages || []
@@ -122,13 +122,13 @@ const PAGE_TEMPLATE = async ({ PageContent, ExtraHead, components, ctx }) => {
 					{twitterTitle ? <meta name="twitter:title" content={twitterTitle} /> : null}
 					{twitterDescription ? <meta name="twitter:description" content={twitterDescription} /> : null}
 					{twitterImage ? <meta name="twitter:image" content={twitterImage} /> : null}
-					<ExtraHead />
 					<link
 						rel="preload stylesheet"
 						as="style"
 						href="/.methanol_theme_default/style.css"
 					/>
-					<script src="/theme-prepare.js"></script>
+					<script type="module" src="/.methanol_theme_default/theme-prepare.js"></script>
+					<ExtraHead />
 				</head>
 				<body>
 					<input type="checkbox" id="nav-toggle" class="nav-toggle" />

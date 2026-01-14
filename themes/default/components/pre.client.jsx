@@ -38,7 +38,7 @@ export default function (props, ...children) {
 		}
 	}
 
-	const Btn = copied.choose(
+	const BtnImg = copied.choose(
 		() => (
 			<svg
 				attr:width="14"
@@ -74,7 +74,7 @@ export default function (props, ...children) {
 	return (
 		<div class="code-block-container">
 			<button class="copy-btn" on:click={copy} attr:aria-label="Copy code">
-				<Btn />
+				<BtnImg />
 			</button>
 			<pre {...props} $ref={el}>
 				{...children}

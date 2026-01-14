@@ -129,7 +129,7 @@ export const runViteDev = async () => {
 	const themeRegistry = themeComponentsDir
 		? await buildComponentRegistry({
 				componentsDir: themeComponentsDir,
-				client: themeEnv.client
+				register: themeEnv.register
 			})
 		: { components: {} }
 	const themeComponents = {

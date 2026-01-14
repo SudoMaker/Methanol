@@ -41,7 +41,8 @@ export const createStageLogger = (enabled) => {
 		}
 		const padding = lastLength > text.length ? ' '.repeat(lastLength - text.length) : ''
 		const clearLine = '\u001b[2K'
-		process.stdout.write(`${clearLine}\r${text}${padding}${newline ? '\n' : ''}`)
+		const reset = '\x1b[0m'
+		process.stdout.write(`${clearLine}\r${reset}${text}${reset}${padding}${newline ? '\n' : ''}`)
 		lastLength = text.length
 	}
 	const start = (label) => {

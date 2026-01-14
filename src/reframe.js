@@ -18,6 +18,7 @@
  * under the License.
  */
 
+import { lazy } from 'refui'
 import fnv1a from '@sindresorhus/fnv1a'
 import JSON5 from 'json5'
 
@@ -45,8 +46,12 @@ export function env(parentEnv) {
 
 	let renderCount = 0
 
-	function client(info) {
-		const { clientPath, staticComponent, exportName } = info
+	function register(info) {
+		const { clientPath, staticPath, staticImportURL, exportName } = info
+
+		if (!clientPath) {
+			return lazy(() => import(staticImportURL))
+		}
 
 		let key = null
 		let _clientPath = clientPath
@@ -55,7 +60,9 @@ export function env(parentEnv) {
 			key = hash(_clientPath)
 		} while (keyPathRegistry[key] && keyPathRegistry[key] !== clientPath)
 
-		const component = ({ children: childrenProp, ...props }, ...children) => {
+		const component = async ({ children: childrenProp, ...props }, ...children) => {
+			const staticComponent = (await import(staticImportURL)).default
+
 			const id = renderCount++
 			const idStr = id.toString(16)
 			const script = `$$rfrm(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props) : '{}'})`
@@ -63,13 +70,13 @@ export function env(parentEnv) {
 			return (R) => {
 				return [
 					R.createAnchor(`{${idStr}}`, true),
-					R.c(
+					staticComponent ? R.c(
 						staticComponent,
 						props,
 						R.createAnchor(`[${idStr}[`, true),
 						...children,
 						R.createAnchor(`]${idStr}]`, true)
-					),
+					): null,
 					R.c('script', null, R.rawHTML(script))
 				]
 			}
@@ -106,7 +113,7 @@ export function env(parentEnv) {
 	}
 
 	return {
-		client,
+		register,
 		invalidate,
 		genRegistryScript,
 		setParent,
