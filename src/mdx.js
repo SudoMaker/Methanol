@@ -36,10 +36,12 @@ import { state } from './state.js'
 import { resolveUserMdxConfig, withBase } from './config.js'
 import { methanolCtx } from './rehype-plugins/methanol-ctx.js'
 import { linkResolve } from './rehype-plugins/link-resolve.js'
+import { cached } from './utils.js'
 
 // Workaround for Vite: it doesn't support resolving module/virtual modules in script src in dev mode
-const resolveRewindInject = () =>
+const resolveRewindInject = cached(() =>
 	HTMLRenderer.rawHTML(`<script type="module" src="${withBase('/.methanol_virtual_module/inject.js')}"></script>`)
+)
 const RWND_FALLBACK = HTMLRenderer.rawHTML(
 	'<script>if(!window.$$rfrm){var l=[];var r=function(k,i,p){l.push([k,i,p,document.currentScript])};r.$$loaded=l;window.$$rfrm=r}</script>'
 )

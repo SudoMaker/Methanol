@@ -41,10 +41,11 @@ import { compilePageMdx, renderHtml } from './mdx.js'
 import { methanolResolverPlugin } from './vite-plugins.js'
 import { preparePublicAssets, updateAsset } from './public-assets.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
+import { virtualModuleDir } from './client/virtual-module/assets.js'
 import { style } from './logger.js'
 
 export const runViteDev = async () => {
-	const baseFsAllow = [state.ROOT_DIR, state.USER_THEME.root].filter(Boolean)
+	const baseFsAllow = [virtualModuleDir, state.ROOT_DIR, state.USER_THEME.root].filter(Boolean)
 	if (state.MERGED_ASSETS_DIR) {
 		baseFsAllow.push(state.MERGED_ASSETS_DIR)
 	}
@@ -167,14 +168,12 @@ export const runViteDev = async () => {
 			server.moduleGraph.invalidateModule(_module)
 		}
 	}
-	const invalidateRewindInject = () => {
-		_invalidate('\0/.methanol_virtual_module/registry.js')
+	const invalidateReframeInject = () => {
 		_invalidate('\0methanol:registry')
-		_invalidate('\0/.methanol_virtual_module/inject.js')
 		_invalidate('\0methanol:inject')
+		_invalidate(resolve(virtualModuleDir, 'inject.js'))
 	}
 	const invalidatePagesIndex = () => {
-		_invalidate('\0/.methanol_virtual_module/pages.js')
 		_invalidate('\0methanol:pages')
 	}
 
@@ -748,7 +747,7 @@ export const runViteDev = async () => {
 			enqueue(async () => {
 				const { hasClient } = await updateComponentEntry(path)
 				if (hasClient) {
-					invalidateRewindInject()
+					invalidateReframeInject()
 				}
 				invalidateHtmlCache()
 				reload()
@@ -759,7 +758,7 @@ export const runViteDev = async () => {
 			const { hasClient } = await updateComponentEntry(path)
 			invalidateHtmlCache()
 			if (hasClient) {
-				invalidateRewindInject()
+				invalidateReframeInject()
 			}
 			reload()
 		})
@@ -780,7 +779,7 @@ export const runViteDev = async () => {
 			const { hasClient } = await updateComponentEntry(path)
 			invalidateHtmlCache()
 			if (hasClient) {
-				invalidateRewindInject()
+				invalidateReframeInject()
 			}
 			reload()
 		})
@@ -791,7 +790,7 @@ export const runViteDev = async () => {
 		if (isClientComponent(path)) {
 			enqueue(async () => {
 				await updateComponentEntry(path, { fallback: true })
-				invalidateRewindInject()
+				invalidateReframeInject()
 				invalidateHtmlCache()
 				reload()
 			})
@@ -808,7 +807,7 @@ export const runViteDev = async () => {
 			})
 			invalidateHtmlCache()
 			if (hasClient) {
-				invalidateRewindInject()
+				invalidateReframeInject()
 			}
 			reload()
 		})

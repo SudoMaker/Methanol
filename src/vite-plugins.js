@@ -27,7 +27,7 @@ import { state } from './state.js'
 import { resolveBasePrefix } from './config.js'
 import { genRegistryScript } from './components.js'
 import { serializePagesIndex } from './pages-index.js'
-import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT, PWA_INJECT_SCRIPT } from './client/virtual-module/assets.js'
+import { virtualModuleDir, INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT, PWA_INJECT_SCRIPT } from './client/virtual-module/assets.js'
 import { projectRequire } from './node-loader.js'
 
 const require = createRequire(import.meta.url)
@@ -127,13 +127,10 @@ const virtualModuleMap = {
 	get registry() {
 		return `export const registry = ${genRegistryScript()}`
 	},
-	get 'registry.js'() {
-		return `export const registry = ${genRegistryScript()}`
-	},
 	get loader() {
 		return LOADER_SCRIPT()
 	},
-	get 'inject.js'() {
+	get 'inject'() {
 		return INJECT_SCRIPT()
 	},
 	get 'pagefind-loader'() {
@@ -149,10 +146,6 @@ const virtualModuleMap = {
 	get pages() {
 		const pages = state.PAGES_CONTEXT?.pages || []
 		return `export const pages = ${serializePagesIndex(pages)}\nexport default pages`
-	},
-	get 'pages.js'() {
-		const pages = state.PAGES_CONTEXT?.pages || []
-		return `export const pages = ${serializePagesIndex(pages)}\nexport default pages`
 	}
 }
 
@@ -163,20 +156,6 @@ const getModuleIdSegment = (id, start) => {
 const getSchemeModuleKey = (id) => {
 	if (!id.startsWith(virtualModuleScheme)) return null
 	return id.slice(virtualModuleScheme.length)
-}
-
-const resolveVirtualModuleId = (id) => {
-	if (id.startsWith(virtualModulePrefix)) {
-		return id
-	}
-	const basePrefix = resolveBasePrefix()
-	if (basePrefix) {
-		const prefixed = `${basePrefix}${virtualModulePrefix}`
-		if (id.startsWith(prefixed)) {
-			return id.slice(basePrefix.length)
-		}
-	}
-	return null
 }
 
 export const methanolResolverPlugin = () => {
@@ -195,17 +174,14 @@ export const methanolResolverPlugin = () => {
 				return require.resolve(id)
 			}
 
+			// Very weird workaround for Vite
+			if (id.startsWith(virtualModulePrefix)) {
+				return resolve(virtualModuleDir, id.slice(virtualModulePrefix.length))
+			}
+
 			const schemeKey = getSchemeModuleKey(id)
 			if (schemeKey && Object.prototype.hasOwnProperty.call(virtualModuleMap, schemeKey)) {
 				return '\0' + id
-			}
-
-			const virtualId = resolveVirtualModuleId(id)
-			if (virtualId) {
-				const _moduleId = getModuleIdSegment(virtualId, virtualModulePrefix.length)
-				if (Object.prototype.hasOwnProperty.call(virtualModuleMap, _moduleId)) {
-					return '\0' + virtualId
-				}
 			}
 
 			if (state.SOURCES.length) {

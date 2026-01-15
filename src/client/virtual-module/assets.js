@@ -21,14 +21,15 @@
 import { readFileSync } from 'fs'
 import { fileURLToPath } from 'url'
 import { dirname, resolve } from 'path'
-import { cached } from '../../utils.js'
+import { cached, cachedStr } from '../../utils.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 
-const readStatic = (filePath) => cached(() => readFileSync(resolve(__dirname, filePath), 'utf-8'))
+export const virtualModuleDir = __dirname
+export const createStaticResource = (filePath) => cached(() => readFileSync(resolve(__dirname, filePath), 'utf-8'))
 
-export const INJECT_SCRIPT = readStatic('./inject.js')
-export const LOADER_SCRIPT = readStatic('./loader.js')
-export const PAGEFIND_LOADER_SCRIPT = readStatic('./pagefind-loader.js')
-export const PWA_INJECT_SCRIPT = readStatic('./pwa-inject.js')
+export const INJECT_SCRIPT = createStaticResource('./inject.js')
+export const LOADER_SCRIPT = createStaticResource('./loader.js')
+export const PAGEFIND_LOADER_SCRIPT = createStaticResource('./pagefind-loader.js')
+export const PWA_INJECT_SCRIPT = createStaticResource('./pwa-inject.js')
