@@ -38,6 +38,8 @@ import {
 } from './components.js'
 import { buildPagesContext, buildPageEntry, routePathFromFile } from './pages.js'
 import { compilePageMdx, renderHtml } from './mdx.js'
+import { DevErrorPage } from './error-page.jsx'
+import { HTMLRenderer } from './renderer.js'
 import { methanolResolverPlugin } from './vite-plugins.js'
 import { preparePublicAssets, updateAsset } from './public-assets.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
@@ -161,6 +163,29 @@ export const runViteDev = async () => {
 		console.error(style.red(`\n[methanol] ${phase} error in ${target}`))
 		console.error(error?.stack || error)
 	}
+	const formatDevError = (error) => {
+		if (!error) return 'Unknown error'
+		if (typeof error === 'string') return error
+		if (error?.stack) return error.stack
+		if (error?.message) return error.message
+		return String(error)
+	}
+	const sendDevError = async (res, error, url = '/') => {
+		const message = formatDevError(error)
+		const basePrefix = devBasePrefix || ''
+		const rawHtml = HTMLRenderer.serialize(
+			DevErrorPage({ message, basePrefix })(HTMLRenderer)
+		)
+		let html = rawHtml
+		try {
+			html = await server.transformIndexHtml(url, rawHtml)
+		} catch (err) {
+			console.error(err)
+		}
+		res.statusCode = 500
+		res.setHeader('Content-Type', 'text/html')
+		res.end(html)
+	}
 
 	const _invalidate = (id) => {
 		const _module = server.moduleGraph.getModuleById(id)
@@ -179,6 +204,12 @@ export const runViteDev = async () => {
 
 	const refreshPagesContext = async () => {
 		setPagesContext(await buildPagesContext({ compileAll: false }))
+	}
+	const resolveStaticCandidate = (baseDir, pathname) => {
+		if (!baseDir) return null
+		const target = resolve(baseDir, pathname.replace(/^\//, ''))
+		if (!target.startsWith(baseDir)) return null
+		return target
 	}
 
 	const prebuildHtmlCache = async (token) => {
@@ -401,7 +432,14 @@ export const runViteDev = async () => {
 		const requestedPath = routePath
 		if (pathname.includes('.') && !pathname.endsWith('.html')) {
 			if (!pagesContext?.pagesByRoute?.has(requestedPath)) {
-				return next()
+				const pageCandidate = resolveStaticCandidate(state.PAGES_DIR, pathname)
+				if (pageCandidate && existsSync(pageCandidate)) {
+					return next()
+				}
+				const staticCandidate = resolveStaticCandidate(state.STATIC_DIR, pathname)
+				if (staticCandidate && existsSync(staticCandidate)) {
+					return next()
+				}
 			}
 		}
 		const isExcludedPath = () => {
@@ -447,8 +485,7 @@ export const runViteDev = async () => {
 					return
 				} catch (err) {
 					console.error(err)
-					res.statusCode = 500
-					res.end('Internal Server Error')
+					await sendDevError(res, err, req.url)
 					return
 				}
 			}
@@ -505,8 +542,7 @@ export const runViteDev = async () => {
 				})
 			} catch (err) {
 				logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
-				res.statusCode = 500
-				res.end('Internal Server Error')
+				await sendDevError(res, err, req.url)
 				return
 			}
 			if (renderEpoch === htmlCacheEpoch) {
@@ -522,8 +558,7 @@ export const runViteDev = async () => {
 			res.end(html)
 		} catch (err) {
 			logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
-			res.statusCode = 500
-			res.end('Internal Server Error')
+			await sendDevError(res, err, req.url)
 		}
 	}
 
