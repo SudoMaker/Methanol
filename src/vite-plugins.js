@@ -26,6 +26,7 @@ import { normalizePath } from 'vite'
 import { state } from './state.js'
 import { resolveBasePrefix } from './config.js'
 import { genRegistryScript } from './components.js'
+import { serializePagesIndex } from './pages-index.js'
 import { INJECT_SCRIPT, LOADER_SCRIPT, PAGEFIND_LOADER_SCRIPT, PWA_INJECT_SCRIPT } from './client/virtual-module/assets.js'
 import { projectRequire } from './node-loader.js'
 
@@ -144,6 +145,14 @@ const virtualModuleMap = {
 		}
 
 		return ''
+	},
+	get pages() {
+		const pages = state.PAGES_CONTEXT?.pages || []
+		return `export const pages = ${serializePagesIndex(pages)}\nexport default pages`
+	},
+	get 'pages.js'() {
+		const pages = state.PAGES_CONTEXT?.pages || []
+		return `export const pages = ${serializePagesIndex(pages)}\nexport default pages`
 	}
 }
 

@@ -65,7 +65,7 @@ export function env(parentEnv) {
 
 			const id = renderCount++
 			const idStr = id.toString(16)
-			const script = `$$rfrm(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props) : '{}'})`
+			const script = `$$rfrm(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props).replace(/<\/script/ig, '<\\/script') : '{}'})`
 
 			return (R) => {
 				return [

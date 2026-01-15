@@ -254,7 +254,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 									<div class="page-meta-item">
 										Powered by{' '}
 										<a
-											href="https://github.com/SudoMaker/Methanol"
+											href="https://methanol.sudoMaker.com"
 											target="_blank"
 											rel="noopener noreferrer"
 											class="methanol-link"

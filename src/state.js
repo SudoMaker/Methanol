@@ -130,6 +130,12 @@ const withCommonOptions = (y) =>
 			type: 'boolean',
 			default: undefined
 		})
+		.option('theme', {
+			describe: 'Theme to use (name or path)',
+			type: 'string',
+			requiresArg: true,
+			nargs: 1
+		})
 		.option('pwa', {
 			describe: 'Enable or disable PWA support',
 			type: 'boolean',
@@ -167,6 +173,7 @@ export const cli = {
 	CLI_VERBOSE: Boolean(argv.verbose),
 	CLI_BASE: argv.base || null,
 	CLI_SEARCH: typeof argv.search === 'boolean' ? argv.search : undefined,
+	CLI_THEME: argv.theme || null,
 	CLI_PWA: typeof argv.pwa === 'boolean' ? argv.pwa : undefined
 }
 
@@ -192,6 +199,7 @@ export const state = {
 	USER_VITE_CONFIG: null,
 	USER_MDX_CONFIG: null,
 	USER_PUBLIC_OVERRIDE: false,
+	PAGES_CONTEXT: null,
 	SOURCES: [],
 	PAGEFIND_ENABLED: false,
 	PAGEFIND_OPTIONS: null,

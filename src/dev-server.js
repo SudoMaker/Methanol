@@ -143,6 +143,7 @@ export const runViteDev = async () => {
 	let pagesContextToken = 0
 	const setPagesContext = (next) => {
 		pagesContext = next
+		state.PAGES_CONTEXT = next
 		pagesContextToken += 1
 	}
 	setPagesContext(await buildPagesContext({ compileAll: false }))
@@ -158,6 +159,23 @@ export const runViteDev = async () => {
 		const target = page?.path || page?.routePath || 'unknown file'
 		console.error(style.red(`\n[methanol] ${phase} error in ${target}`))
 		console.error(error?.stack || error)
+	}
+
+	const _invalidate = (id) => {
+		const _module = server.moduleGraph.getModuleById(id)
+		if (_module) {
+			server.moduleGraph.invalidateModule(_module)
+		}
+	}
+	const invalidateRewindInject = () => {
+		_invalidate('\0/.methanol_virtual_module/registry.js')
+		_invalidate('\0methanol:registry')
+		_invalidate('\0/.methanol_virtual_module/inject.js')
+		_invalidate('\0methanol:inject')
+	}
+	const invalidatePagesIndex = () => {
+		_invalidate('\0/.methanol_virtual_module/pages.js')
+		_invalidate('\0methanol:pages')
 	}
 
 	const refreshPagesContext = async () => {
@@ -214,6 +232,7 @@ export const runViteDev = async () => {
 				}
 			}
 			pagesContext.refreshPagesTree?.()
+			invalidatePagesIndex()
 			invalidateHtmlCache()
 			const renderEpoch = htmlCacheEpoch
 
@@ -518,19 +537,6 @@ export const runViteDev = async () => {
 	await server.listen()
 	server.printUrls()
 
-	const _invalidate = (id) => {
-		const _module = server.moduleGraph.getModuleById(id)
-		if (_module) {
-			server.moduleGraph.invalidateModule(_module)
-		}
-	}
-	const invalidateRewindInject = () => {
-		_invalidate('\0/.methanol_virtual_module/registry.js')
-		_invalidate('\0methanol:registry')
-		_invalidate('\0/.methanol_virtual_module/inject.js')
-		_invalidate('\0methanol:inject')
-	}
-
 	let queue = Promise.resolve()
 	const enqueue = (task) => {
 		queue = queue.then(task).catch((err) => {
@@ -547,6 +553,7 @@ export const runViteDev = async () => {
 
 	const refreshPages = async () => {
 		await refreshPagesContext()
+		invalidatePagesIndex()
 		invalidateHtmlCache()
 		reload()
 	}
@@ -700,6 +707,7 @@ export const runViteDev = async () => {
 		}
 		const updated = await updatePageEntry(path, resolved)
 		if (updated) {
+			invalidatePagesIndex()
 			invalidateHtmlCache()
 			reload()
 			return

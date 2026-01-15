@@ -18,11 +18,25 @@
  * under the License.
  */
 
-import { HTMLRenderer } from './src/renderer.js'
-export { extractExcerpt } from './src/text-utils.js'
+import JSON5 from 'json5'
+import { extractExcerpt } from './text-utils.js'
 
-export { env } from './src/reframe.js'
+const OMIT_KEYS = new Set(['content', 'mdxComponent', 'mdxCtx', 'getSiblings'])
 
-const DOCTYPE_HTML = HTMLRenderer.rawHTML`<!DOCTYPE html>`
+const sanitizePage = (page) => {
+	const result = {}
+	for (const [key, value] of Object.entries(page || {})) {
+		if (OMIT_KEYS.has(key)) continue
+		if (typeof value === 'function') continue
+		result[key] = value
+	}
+	result.excerpt = extractExcerpt(page)
+	return result
+}
 
-export { HTMLRenderer, DOCTYPE_HTML }
+export const serializePagesIndex = (pages) => {
+	const list = Array.isArray(pages)
+		? pages.filter((page) => !page?.hidden).map(sanitizePage)
+		: []
+	return JSON5.stringify(list)
+}

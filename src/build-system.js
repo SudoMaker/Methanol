@@ -147,6 +147,7 @@ export const buildHtmlEntries = async () => {
 			}
 		}
 		pagesContext.refreshPagesTree?.()
+		state.PAGES_CONTEXT = pagesContext
 
 		const titleSnapshot = pages.map((page) => page.title)
 		await runWorkerStage({

@@ -20,9 +20,10 @@
 
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
-import { resolve, isAbsolute, extname, basename } from 'path'
-import { pathToFileURL } from 'url'
+import { resolve, isAbsolute, extname, basename, dirname } from 'path'
+import { pathToFileURL, fileURLToPath } from 'url'
 import { mergeConfig } from 'vite'
+import { projectRequire } from './node-loader.js'
 import { cli, state } from './state.js'
 import { logger } from './logger.js'
 import { HTMLRenderer } from './renderer.js'
@@ -239,6 +240,34 @@ const buildConfigContext = (mode) => ({
 	HTMLRenderer
 })
 
+const resolveTheme = async (themeValue, root) => {
+	if (typeof themeValue !== 'string') return themeValue
+
+	const load = async (p) => {
+		const mod = await import(pathToFileURL(p).href)
+		const fn = mod.default ?? mod
+		return typeof fn === 'function' ? fn() : fn
+	}
+
+	// 1. Check Methanol themes dir
+	const __dirname = dirname(fileURLToPath(import.meta.url))
+	const builtInPath = resolve(__dirname, '../themes', themeValue, 'index.js')
+	if (existsSync(builtInPath)) {
+		return load(builtInPath)
+	}
+
+	// 2. Resolve methanol-theme-<name> from user dir
+	try {
+		const pkgName = `methanol-theme-${themeValue}`
+		const pkgPath = projectRequire.resolve(pkgName)
+		return load(pkgPath)
+	} catch (e) {
+		// Ignore
+	}
+
+	throw new Error(`Theme not found: ${themeValue}`)
+}
+
 export const loadUserConfig = async (mode, configPath = null) => {
 	if (configPath) {
 		const filePath = resolveConfigPath(configPath)
@@ -323,7 +352,8 @@ export const applyConfig = async (config, mode) => {
 
 	state.VIRTUAL_HTML_OUTPUT_ROOT = state.PAGES_DIR
 
-	state.USER_THEME = config.theme || await defaultTheme()
+	const themeValue = cli.CLI_THEME || config.theme
+	state.USER_THEME = themeValue ? await resolveTheme(themeValue, root) : await defaultTheme()
 	if (!state.USER_THEME?.root && !config.theme?.root) {
 		throw new Error('Theme root is required.')
 	}
