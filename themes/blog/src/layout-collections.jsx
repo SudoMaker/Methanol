@@ -18,7 +18,6 @@
  * under the License.
  */
 
-import { HTMLRenderer as R } from 'methanol'
 import { filterBlogPosts, mapStaticPosts, collectCollectionTitles } from './post-utils.js'
 import { formatDate } from '../src/date-utils.js'
 

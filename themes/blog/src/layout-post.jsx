@@ -18,8 +18,6 @@
  * under the License.
  */
 
-import { HTMLRenderer as R } from 'methanol'
-
 export const LayoutPost = ({ PageContent, title, page }) => {
 	return (
 		<article class="post-content">

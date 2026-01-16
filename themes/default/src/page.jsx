@@ -18,7 +18,7 @@
  * under the License.
  */
 
-import { HTMLRenderer as R, DOCTYPE_HTML } from 'methanol'
+import { DOCTYPE_HTML } from 'methanol'
 import { renderToc } from '../components/ThemeToCContainer.static.jsx'
 import { renderNavTree } from './nav-tree.jsx'
 

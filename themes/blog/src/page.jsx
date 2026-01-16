@@ -18,7 +18,7 @@
  * under the License.
  */
 
-import { HTMLRenderer as R, DOCTYPE_HTML } from 'methanol'
+import { DOCTYPE_HTML } from 'methanol'
 import { LayoutHome } from './layout-home.jsx'
 import { LayoutCategories } from './layout-categories.jsx'
 import { LayoutCollections } from './layout-collections.jsx'
