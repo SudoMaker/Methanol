@@ -221,17 +221,21 @@ const normalizeStarryNightConfig = (value) => {
 const resolveStarryNightForPage = (frontmatter) => {
 	const base = {
 		enabled: state.STARRY_NIGHT_ENABLED === true,
-		options: state.STARRY_NIGHT_OPTIONS || null
+		options: state.STARRY_NIGHT_OPTIONS || null,
+		explicit: false
 	}
 	if (!frontmatter || !Object.prototype.hasOwnProperty.call(frontmatter, 'starryNight')) {
 		return base
 	}
 	const override = normalizeStarryNightConfig(frontmatter.starryNight)
 	if (!override) return base
-	if (override.enabled === false) return { enabled: false, options: null }
+	if (override.enabled === false) return { enabled: false, options: null, explicit: true }
 	const options = override.options != null ? override.options : base.options
-	return { enabled: true, options }
+	return { enabled: true, options, explicit: true }
 }
+
+const CODE_FENCE_PATTERN = /(^|\n)\s*(```|~~~)\s*[A-Za-z]/m
+const hasCodeFence = (value) => CODE_FENCE_PATTERN.test(String(value || ''))
 
 const resolveBaseMdxConfig = async () => {
 	const userMdxConfig = await resolveUserMdxConfig()
@@ -264,7 +268,7 @@ const resolveBaseMdxConfig = async () => {
 	return (cachedMdxConfig = mdxConfig)
 }
 
-const resolveMdxConfigForPage = async (frontmatter) => {
+const resolveMdxConfigForPage = async (frontmatter, content = '') => {
 	const baseConfig = await resolveBaseMdxConfig()
 	const mdxConfig = {
 		...baseConfig,
@@ -272,6 +276,11 @@ const resolveMdxConfigForPage = async (frontmatter) => {
 	}
 	const starryNightConfig = resolveStarryNightForPage(frontmatter)
 	if (!starryNightConfig.enabled) return mdxConfig
+	if (!starryNightConfig.explicit && state.STARRY_NIGHT_ENABLED === true) {
+		if (!hasCodeFence(content)) {
+			return mdxConfig
+		}
+	}
 	const plugin = starryNightConfig.options ? [rehypeStarryNight, starryNightConfig.options] : [rehypeStarryNight]
 	const insertIndex = mdxConfig.rehypePlugins.indexOf(linkResolve)
 	if (insertIndex >= 0) {
@@ -283,7 +292,7 @@ const resolveMdxConfigForPage = async (frontmatter) => {
 }
 
 export const compileMdxSource = async ({ content, path, frontmatter }) => {
-	const mdxConfig = await resolveMdxConfigForPage(frontmatter)
+	const mdxConfig = await resolveMdxConfigForPage(frontmatter, content)
 	const compiled = await compile({ value: content, path: path }, mdxConfig)
 	const code = String(compiled.value ?? compiled)
 	return { code, development: Boolean(mdxConfig.development) }
