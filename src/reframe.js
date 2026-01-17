@@ -61,10 +61,10 @@ export function env(parentEnv) {
 		} while (keyPathRegistry[key] && keyPathRegistry[key] !== clientPath)
 
 		const component = async ({ children: childrenProp, ...props }, ...children) => {
-			const staticComponent = (await import(staticImportURL)).default
-
 			const id = renderCount++
 			const idStr = id.toString(16)
+
+			const staticComponent = (await import(staticImportURL)).default
 			const script = `$$rfrm(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props).replace(/<\/script/ig, '<\\/script') : '{}'})`
 
 			return (R) => {
@@ -101,6 +101,11 @@ export function env(parentEnv) {
 		parent = nextParent || null
 	}
 
+	function resetRenderCount() {
+		renderCount = 0
+		parent?.resetRenderCount()
+	}
+
 	function getMergedRegistry() {
 		return Object.assign({}, parent?.registry, registry)
 	}
@@ -117,6 +122,7 @@ export function env(parentEnv) {
 		invalidate,
 		genRegistryScript,
 		setParent,
+		resetRenderCount,
 		get registry() {
 			return getMergedRegistry()
 		}

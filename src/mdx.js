@@ -38,6 +38,7 @@ import { resolveUserMdxConfig, withBase } from './config.js'
 import { methanolCtx } from './rehype-plugins/methanol-ctx.js'
 import { linkResolve } from './rehype-plugins/link-resolve.js'
 import { cached } from './utils.js'
+import { resetReframeRenderCount } from './components.js'
 
 // Workaround for Vite: it doesn't support resolving module/virtual modules in script src in dev mode
 const resolveRewindInject = cached(() =>
@@ -585,6 +586,7 @@ export const compilePageMdx = async (page, pagesContext, options = {}) => {
 }
 
 export const renderHtml = async ({ routePath, path, components, pagesContext, pageMeta }) => {
+	resetReframeRenderCount()
 	const ctx = buildPageContext({
 		routePath,
 		path,

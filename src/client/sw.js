@@ -139,7 +139,6 @@ self.addEventListener('install', (event) => {
 			const assetCache = await openCache(ASSETS_CACHE)
 			const manifestEntries = getManifestEntries()
 			const manifestMap = buildManifestMap(manifestEntries)
-			const previousMap = await loadStoredManifestMap()
 			const manifestUrls = manifestEntries.map((entry) => entry.url)
 			const [prioritized] = prioritizeManifestUrls(manifestUrls)
 			const { failedIndex } = await runConcurrentQueue(prioritized, {
@@ -150,11 +149,9 @@ self.addEventListener('install', (event) => {
 					const cached = await matchCache(cacheName, url)
 					const key = manifestKey(url)
 					const currentRevision = manifestMap.get(key) ?? null
-					const previousRevision = previousMap.get(key) ?? null
 					const shouldFetch = shouldFetchWithRevision({
 						cached,
-						currentRevision,
-						previousRevision
+						currentRevision
 					})
 					if (!shouldFetch) return true
 					const cache = isHtml ? pageCache : assetCache
@@ -272,11 +269,12 @@ async function runConcurrentQueue(list, { concurrency, handler, stopOnError = tr
 	return { ok: failedIndex === null, failedIndex }
 }
 
-function shouldFetchWithRevision({ cached, currentRevision, previousRevision }) {
+function shouldFetchWithRevision({ cached, currentRevision }) {
 	if (!cached) return true
 	if (currentRevision == null) return false
-	if (previousRevision == null) return true
-	return currentRevision !== previousRevision
+	const cachedRevision = cached.headers?.get?.(REVISION_HEADER)
+	if (cachedRevision == null) return true
+	return cachedRevision !== String(currentRevision)
 }
 
 function shouldRevalidateCached(cached, currentRevision) {
@@ -550,7 +548,6 @@ const DB_STORE = 'kv'
 const KEY_INDEX = 'warmIndex'
 const KEY_LEASE = 'warmLease'
 const KEY_FORCE = 'warmForce'
-const KEY_MANIFEST = 'warmManifest'
 
 function idbOpen() {
 	return new Promise((resolve, reject) => {
@@ -611,12 +608,6 @@ function buildManifestMap(entries) {
 	return map
 }
 
-async function loadStoredManifestMap() {
-	const stored = await idbGet(KEY_MANIFEST)
-	if (!stored) return new Map()
-	if (Array.isArray(stored)) return buildManifestMap(stored)
-	return new Map()
-}
 
 async function tryAcquireLease(leaseMs) {
 	const leaseId = randomId()
@@ -667,7 +658,6 @@ async function warmManifestResumable({ force = false } = {}) {
 	try {
 		const manifestEntries = getManifestEntries()
 		const manifestMap = buildManifestMap(manifestEntries)
-		const previousMap = await loadStoredManifestMap()
 		const [, urls] = prioritizeManifestUrls(manifestEntries.map((entry) => entry.url))
 		if (!urls.length) return
 		if (index >= urls.length) {
@@ -685,14 +675,12 @@ async function warmManifestResumable({ force = false } = {}) {
 				const isHtml = abs.endsWith('.html')
 				const key = manifestKey(abs)
 				const currentRevision = manifestMap.get(key) ?? null
-				const previousRevision = previousMap.get(key) ?? null
 
 				if (isHtml) {
 					const cached = await matchCache(PAGES_CACHE, abs)
 					const shouldFetch = shouldFetchWithRevision({
 						cached,
-						currentRevision,
-						previousRevision
+						currentRevision
 					})
 					if (!shouldFetch) return true
 
@@ -709,8 +697,7 @@ async function warmManifestResumable({ force = false } = {}) {
 					const cached = await matchCache(ASSETS_CACHE, abs)
 					const shouldFetch = shouldFetchWithRevision({
 						cached,
-						currentRevision,
-						previousRevision
+						currentRevision
 					})
 					if (!shouldFetch) return true
 
@@ -738,7 +725,6 @@ async function warmManifestResumable({ force = false } = {}) {
 		completed = true
 	} finally {
 		if (completed) {
-			await idbSet(KEY_MANIFEST, getManifestEntries())
 			await idbSet(KEY_FORCE, 0)
 		}
 		await releaseLease(lease)

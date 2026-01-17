@@ -51,6 +51,7 @@ export const reframeEnv = env()
 export const register = reframeEnv.register
 export const invalidateRegistryEntry = reframeEnv.invalidate
 export const genRegistryScript = reframeEnv.genRegistryScript
+export const resetReframeRenderCount = () => reframeEnv.resetRenderCount()
 
 const resolveComponentExport = (componentPath, exportName, ext) => {
 	const staticCandidate = `${componentPath}.static${ext}`
@@ -75,7 +76,9 @@ const resolveComponentExport = (componentPath, exportName, ext) => {
 	}
 
 	if (ret.staticPath) {
-		ret.staticImportURL = `${pathToFileURL(ret.staticPath).href}?t=${componentImportNonce}`
+		const baseUrl = pathToFileURL(ret.staticPath).href
+		ret.staticImportURL =
+			state.CURRENT_MODE === 'production' ? baseUrl : `${baseUrl}?t=${componentImportNonce}`
 	}
 
 	return ret
