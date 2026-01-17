@@ -25,6 +25,7 @@ import rehypeSlug from 'rehype-slug'
 import extractToc from '@stefanprobst/rehype-extract-toc'
 import withTocExport from '@stefanprobst/rehype-extract-toc/mdx'
 import rehypeStarryNight from 'rehype-starry-night'
+import { createStarryNight } from '@wooorm/starry-night'
 import remarkGfm from 'remark-gfm'
 import { HTMLRenderer } from './renderer.js'
 import { signal, computed, read, Suspense, nextTick } from 'refui'
@@ -227,15 +228,223 @@ const resolveStarryNightForPage = (frontmatter) => {
 	if (!frontmatter || !Object.prototype.hasOwnProperty.call(frontmatter, 'starryNight')) {
 		return base
 	}
-	const override = normalizeStarryNightConfig(frontmatter.starryNight)
+	const overrideValue = frontmatter.starryNight
+	if (typeof overrideValue === 'boolean') {
+		if (overrideValue === false) {
+			return { enabled: false, options: null, explicit: true }
+		}
+		return { enabled: true, options: base.options, explicit: false }
+	}
+	if (!overrideValue || typeof overrideValue !== 'object') {
+		return base
+	}
+	const override = normalizeStarryNightConfig(overrideValue)
 	if (!override) return base
 	if (override.enabled === false) return { enabled: false, options: null, explicit: true }
 	const options = override.options != null ? override.options : base.options
 	return { enabled: true, options, explicit: true }
 }
 
-const CODE_FENCE_PATTERN = /(^|\n)\s*(```|~~~)\s*[A-Za-z]/m
-const hasCodeFence = (value) => CODE_FENCE_PATTERN.test(String(value || ''))
+const CODE_FENCE_LANG_PATTERN = /(^|\n)\s*(```|~~~)\s*([^\s{]+)/g
+const extractCodeFenceLanguages = (value) => {
+	const text = String(value || '')
+	const languages = new Set()
+	CODE_FENCE_LANG_PATTERN.lastIndex = 0
+	let match
+	while ((match = CODE_FENCE_LANG_PATTERN.exec(text))) {
+		let lang = match[3] ? String(match[3]).trim() : ''
+		if (!lang) continue
+		const braceIndex = lang.indexOf('{')
+		if (braceIndex >= 0) {
+			lang = lang.slice(0, braceIndex).trim()
+		}
+		if (!lang || !/[A-Za-z]/.test(lang)) continue
+		languages.add(lang.toLowerCase())
+	}
+	return languages
+}
+const cleanStarryOptions = (options) => {
+	if (!options || typeof options !== 'object') return undefined
+	const next = { ...options }
+	delete next.grammars
+	return next
+}
+let starryNightFuture = null
+const resolvedGrammarCache = new Map()
+const resolvedCustomGrammarCache = new Map()
+const failedLanguageCache = new Set()
+const failedCustomLanguageCache = new Map()
+const loadStarryNight = async (options) => {
+	if (!starryNightFuture) {
+		starryNightFuture = import('@wooorm/starry-night').then(async (mod) => {
+			const grammars = Array.isArray(mod?.all) ? mod.all : []
+			const starryNight = await createStarryNight(grammars, cleanStarryOptions(options))
+			return {
+				starryNight,
+				grammars,
+				scopeMap: buildScopeGrammarMap(grammars)
+			}
+		})
+	}
+	return starryNightFuture
+}
+const buildScopeGrammarMap = (grammars) => {
+	const scopeMap = new Map()
+	for (const grammar of grammars || []) {
+		const scopeName = grammar?.scopeName
+		if (typeof scopeName === 'string' && scopeName) {
+			scopeMap.set(scopeName, grammar)
+		}
+	}
+	return scopeMap
+}
+const collectExternalScopes = (grammar) => {
+	const scopes = new Set()
+	const addScope = (value) => {
+		if (typeof value !== 'string') return
+		if (!value || value.startsWith('#')) return
+		scopes.add(value)
+	}
+	const visit = (node) => {
+		if (!node) return
+		if (Array.isArray(node)) {
+			for (const item of node) {
+				visit(item)
+			}
+			return
+		}
+		if (typeof node !== 'object') return
+		if (typeof node.include === 'string') {
+			addScope(node.include)
+		}
+		for (const value of Object.values(node)) {
+			visit(value)
+		}
+	}
+	if (Array.isArray(grammar?.dependencies)) {
+		for (const dep of grammar.dependencies) {
+			addScope(dep)
+		}
+	}
+	visit(grammar?.patterns)
+	visit(grammar?.repository)
+	return scopes
+}
+const resolveStarryNightGrammars = async (languages, options) => {
+	const hasCustomGrammars = Array.isArray(options?.grammars)
+	const baseGrammars = hasCustomGrammars ? options.grammars : null
+	if (hasCustomGrammars && (!baseGrammars || !baseGrammars.length)) return null
+	const getCustomKey = (grammars) =>
+		(grammars || [])
+			.map((grammar) => grammar?.scopeName)
+			.filter(Boolean)
+			.sort()
+			.join('|')
+	const failedSet = hasCustomGrammars
+		? (() => {
+				const customKey = getCustomKey(baseGrammars)
+				let set = failedCustomLanguageCache.get(customKey)
+				if (!set) {
+					set = new Set()
+					failedCustomLanguageCache.set(customKey, set)
+				}
+				return set
+			})()
+		: failedLanguageCache
+	const filteredLanguages = Array.from(languages || [])
+		.map((lang) => String(lang).toLowerCase())
+		.filter((lang) => lang && !failedSet.has(lang))
+	const languageKey = filteredLanguages.slice().sort().join('|')
+	if (!languageKey) return []
+	if (hasCustomGrammars) {
+		const customKey = getCustomKey(baseGrammars)
+		const customCache = resolvedCustomGrammarCache.get(customKey)
+		if (customCache?.has(languageKey)) {
+			return customCache.get(languageKey)
+		}
+	} else if (resolvedGrammarCache.has(languageKey)) {
+		return resolvedGrammarCache.get(languageKey)
+	}
+	const selected = new Set()
+	const selectedScopes = new Set()
+	let scopeMap = baseGrammars ? buildScopeGrammarMap(baseGrammars) : null
+	let loadedStarryNight = null
+	const ensureAll = async () => {
+		if (!loadedStarryNight && !hasCustomGrammars) {
+			loadedStarryNight = await loadStarryNight(options)
+			if (!scopeMap) {
+				scopeMap = loadedStarryNight?.scopeMap || null
+			}
+		}
+	}
+	let flagToScope = null
+	if (hasCustomGrammars) {
+		const customStarryNight = await createStarryNight(baseGrammars, cleanStarryOptions(options))
+		flagToScope = (lang) => customStarryNight.flagToScope(String(lang))
+	} else {
+		try {
+			await ensureAll()
+		} catch {
+			for (const lang of filteredLanguages) {
+				failedSet.add(lang)
+			}
+			return []
+		}
+		flagToScope = (lang) => loadedStarryNight?.starryNight.flagToScope(String(lang))
+	}
+	if (!scopeMap) return null
+	const addGrammar = (grammar) => {
+		if (!grammar) return false
+		const scopeName = grammar.scopeName
+		if (!scopeName || selectedScopes.has(scopeName)) return false
+		selectedScopes.add(scopeName)
+		selected.add(grammar)
+		return true
+	}
+	for (const lang of filteredLanguages) {
+		let scope
+		try {
+			scope = flagToScope ? flagToScope(String(lang)) : undefined
+		} catch {
+			scope = undefined
+		}
+		const grammar = scope && scopeMap ? scopeMap.get(scope) : null
+		if (!grammar) {
+			failedSet.add(lang)
+		}
+		addGrammar(grammar)
+	}
+	if (!selected.size) return []
+	const queue = Array.from(selected)
+	while (queue.length) {
+		const grammar = queue.pop()
+		const scopes = collectExternalScopes(grammar)
+		for (const scope of scopes) {
+			if (selectedScopes.has(scope)) continue
+			let depGrammar = scopeMap ? scopeMap.get(scope) : null
+			if (!depGrammar && !hasCustomGrammars) {
+				await ensureAll()
+				depGrammar = scopeMap ? scopeMap.get(scope) : null
+			}
+			if (addGrammar(depGrammar)) {
+				queue.push(depGrammar)
+			}
+		}
+	}
+	const result = selected.size ? Array.from(selected) : []
+	if (hasCustomGrammars) {
+		const customKey = getCustomKey(baseGrammars)
+		let customCache = resolvedCustomGrammarCache.get(customKey)
+		if (!customCache) {
+			customCache = new Map()
+			resolvedCustomGrammarCache.set(customKey, customCache)
+		}
+		customCache.set(languageKey, result)
+	} else {
+		resolvedGrammarCache.set(languageKey, result)
+	}
+	return result
+}
 
 const resolveBaseMdxConfig = async () => {
 	const userMdxConfig = await resolveUserMdxConfig()
@@ -276,12 +485,19 @@ const resolveMdxConfigForPage = async (frontmatter, content = '') => {
 	}
 	const starryNightConfig = resolveStarryNightForPage(frontmatter)
 	if (!starryNightConfig.enabled) return mdxConfig
-	if (!starryNightConfig.explicit && state.STARRY_NIGHT_ENABLED === true) {
-		if (!hasCodeFence(content)) {
+	let options = starryNightConfig.options
+	if (!starryNightConfig.explicit) {
+		const languages = extractCodeFenceLanguages(content)
+		if (!languages.size) {
 			return mdxConfig
 		}
+		const grammars = await resolveStarryNightGrammars(languages, options)
+		if (!grammars || !grammars.length) {
+			return mdxConfig
+		}
+		options = { ...(options || {}), grammars }
 	}
-	const plugin = starryNightConfig.options ? [rehypeStarryNight, starryNightConfig.options] : [rehypeStarryNight]
+	const plugin = options ? [rehypeStarryNight, options] : [rehypeStarryNight]
 	const insertIndex = mdxConfig.rehypePlugins.indexOf(linkResolve)
 	if (insertIndex >= 0) {
 		mdxConfig.rehypePlugins.splice(insertIndex, 0, plugin)
