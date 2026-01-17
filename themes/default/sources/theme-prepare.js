@@ -29,7 +29,7 @@
 	if (savedAccent && savedAccent !== 'default') {
 		document.documentElement.classList.add('accent-' + savedAccent)
 	}
-})
+})()
 ;(function initPrefetch() {
 	const prefetched = new Set()
 	const canPrefetch = (anchor) => {
@@ -58,4 +58,4 @@
 		document.head.appendChild(link)
 	}
 	document.addEventListener('pointerover', onHover, { capture: true, passive: true })
-})
+})()
