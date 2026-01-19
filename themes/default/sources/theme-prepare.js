@@ -25,6 +25,19 @@
 	document.documentElement.classList.toggle('light', theme === 'light')
 	document.documentElement.classList.toggle('dark', theme === 'dark')
 
+	const metas = document.querySelectorAll('meta[name="theme-color"]')
+	let meta = metas[0]
+	if (!meta) {
+		meta = document.createElement('meta')
+		meta.name = 'theme-color'
+		document.head.appendChild(meta)
+	}
+	for (let i = 1; i < metas.length; i++) {
+		metas[i].remove()
+	}
+	meta.content = theme === 'light' ? '#ffffff' : '#09090b'
+	meta.removeAttribute('media')
+
 	const savedAccent = localStorage.getItem('methanol-accent')
 	if (savedAccent && savedAccent !== 'default') {
 		document.documentElement.classList.add('accent-' + savedAccent)

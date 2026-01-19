@@ -64,6 +64,10 @@ export default () => ({
 })
 ```
 
+## Themes
+
+Methanol includes built-in themes (`default`, `blog`). Use `--theme <name>` or set `theme: '<name>'` in config. For local themes inside your project, import the theme entry in `methanol.config.*` and pass the theme object/factory.
+
 ## CLI notes
 
 - `methanol preview` is an alias for `methanol serve`

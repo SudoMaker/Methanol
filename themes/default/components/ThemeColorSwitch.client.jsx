@@ -75,6 +75,19 @@ export default function () {
 		localStorage.setItem('methanol-theme', theme.value)
 		document.documentElement.classList.toggle('light', theme.value === 'light')
 		document.documentElement.classList.toggle('dark', theme.value === 'dark')
+
+		const metas = document.querySelectorAll('meta[name="theme-color"]')
+		let meta = metas[0]
+		if (!meta) {
+			meta = document.createElement('meta')
+			meta.name = 'theme-color'
+			document.head.appendChild(meta)
+		}
+		for (let i = 1; i < metas.length; i++) {
+			metas[i].remove()
+		}
+		meta.content = theme.value === 'light' ? '#ffffff' : '#09090b'
+		meta.removeAttribute('media')
 	}
 
 	const CurrentIcon = $(() => {

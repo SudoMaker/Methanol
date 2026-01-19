@@ -108,6 +108,8 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 				<head>
 					<meta charset="UTF-8" />
 					<meta name="viewport" content="width=device-width" />
+					<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+					<meta name="theme-color" content="#09090b" media="(prefers-color-scheme: dark)" />
 					<title>
 						{title} | {siteName}
 					</title>
