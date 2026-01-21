@@ -24,7 +24,7 @@ import { LayoutCategories } from './layout-categories.jsx'
 import { LayoutCollections } from './layout-collections.jsx'
 import { LayoutPost } from './layout-post.jsx'
 
-const Header = ({ siteName, navLinks, components, pagefindOptions }) => {
+const Header = ({ siteName, navLinks, components, pagefindOptions, rssHref, feedLabel }) => {
 	const { ThemeSearchBox } = components || {}
 	return (
 		<header class="blog-header">
@@ -34,7 +34,12 @@ const Header = ({ siteName, navLinks, components, pagefindOptions }) => {
 				</a>
 				<div class="header-actions">
 					{ThemeSearchBox && <ThemeSearchBox options={pagefindOptions} />}
-					
+					{rssHref ? (
+						<a class="rss-link" href={rssHref}>
+							{feedLabel}
+						</a>
+					) : null}
+
 					<input type="checkbox" id="nav-toggle" class="nav-toggle" />
 					<label for="nav-toggle" class="nav-toggle-label">
 						<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -95,6 +100,10 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 
 	const pagefindEnabled = ctx.site.pagefind?.enabled !== false
 	const pagefindOptions = ctx.site.pagefind?.options || null
+	const feedInfo = ctx.site.feed
+	const rssHref = feedInfo?.enabled ? feedInfo.href : null
+	const feedType = feedInfo?.atom ? 'application/atom+xml' : 'application/rss+xml'
+	const feedLabel = feedInfo?.atom ? 'Atom' : 'RSS'
 
 	return (
 		<>
@@ -107,6 +116,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 						{title} | {siteName}
 					</title>
 					<link rel="stylesheet" href="/.methanol_theme_blog/style.css" />
+					{rssHref ? <link rel="alternate" type={feedType} title={`${siteName} ${feedLabel}`} href={rssHref} /> : null}
 					<ExtraHead />
 				</head>
 				<body>
@@ -116,6 +126,8 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 							navLinks={resolvedNavLinks}
 							components={pagefindEnabled ? components : {}}
 							pagefindOptions={pagefindOptions}
+							rssHref={rssHref}
+							feedLabel={feedLabel}
 						/>
 						<main class="container main-content">
 							{isHome ? (

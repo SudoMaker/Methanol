@@ -52,6 +52,8 @@ export const register = reframeEnv.register
 export const invalidateRegistryEntry = reframeEnv.invalidate
 export const genRegistryScript = reframeEnv.genRegistryScript
 export const resetReframeRenderCount = () => reframeEnv.resetRenderCount()
+export const setReframeHydrationEnabled = (value) => reframeEnv.setHydrationEnabled(value)
+export const getReframeHydrationEnabled = () => reframeEnv.getHydrationEnabled()
 
 const resolveComponentExport = (componentPath, exportName, ext) => {
 	const staticCandidate = `${componentPath}.static${ext}`

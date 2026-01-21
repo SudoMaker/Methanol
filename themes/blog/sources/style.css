@@ -98,6 +98,19 @@ a {
     flex-shrink: 0;
 }
 
+.header-actions .rss-link {
+	color: inherit;
+	text-decoration: none;
+	font-size: 0.9rem;
+	padding: 0.25rem 0.5rem;
+	border-radius: 999px;
+	border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+}
+
+.header-actions .rss-link:hover {
+	border-color: currentColor;
+}
+
 .blog-nav {
 	display: flex;
 	gap: 1.25rem;

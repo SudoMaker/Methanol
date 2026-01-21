@@ -40,6 +40,8 @@ const cliOverrides = {
 	CLI_BASE: cli.CLI_BASE,
 	CLI_SEARCH: cli.CLI_SEARCH,
 	CLI_THEME: cli.CLI_THEME,
+	CLI_RSS: cli.CLI_RSS,
+	CLI_ATOM: cli.CLI_ATOM,
 	CLI_PWA: cli.CLI_PWA
 }
 

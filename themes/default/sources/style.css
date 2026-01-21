@@ -470,6 +470,17 @@ a {
 		flex-shrink: 0; /* Prevent footer from shrinking */
 	}
 
+	.sidebar-footer .rss-link {
+		font-size: 0.8rem;
+		color: var(--text-muted);
+		text-decoration: none;
+		padding: 0 0.25rem;
+	}
+
+	.sidebar-footer .rss-link:hover {
+		color: var(--text);
+	}
+
 	.lang-switch-wrapper {
 		flex: 1;
 		position: relative;
@@ -1825,4 +1836,3 @@ a {
 		size: auto;
 	}
 }
-

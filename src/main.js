@@ -22,6 +22,7 @@ import { loadUserConfig, applyConfig } from './config.js'
 import { runViteDev } from './dev-server.js'
 import { buildHtmlEntries, runViteBuild } from './build-system.js'
 import { runPagefind } from './pagefind.js'
+import { generateRssFeed } from './feed.js'
 import { runVitePreview } from './preview-server.js'
 import { cli, state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
@@ -111,7 +112,7 @@ const main = async () => {
 		const startTime = performance.now()
 		await runHooks(state.USER_PRE_BUILD_HOOKS)
 		await runHooks(state.THEME_PRE_BUILD_HOOKS)
-		const { entry, htmlCache, pagesContext } = await buildHtmlEntries()
+		const { entry, htmlCache, pagesContext, rssContent } = await buildHtmlEntries()
 		const buildContext = pagesContext
 			? {
 					pagesContext,
@@ -128,6 +129,9 @@ const main = async () => {
 		await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
 		if (state.PAGEFIND_ENABLED) {
 			await runPagefind()
+		}
+		if (state.RSS_ENABLED) {
+			await generateRssFeed(pagesContext, rssContent)
 		}
 		await runHooks(state.THEME_POST_BUILD_HOOKS, buildContext)
 		await runHooks(state.USER_POST_BUILD_HOOKS, buildContext)

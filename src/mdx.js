@@ -38,7 +38,7 @@ import { resolveUserMdxConfig, withBase } from './config.js'
 import { methanolCtx } from './rehype-plugins/methanol-ctx.js'
 import { linkResolve } from './rehype-plugins/link-resolve.js'
 import { cached } from './utils.js'
-import { resetReframeRenderCount } from './components.js'
+import { resetReframeRenderCount, setReframeHydrationEnabled, getReframeHydrationEnabled } from './components.js'
 
 // Workaround for Vite: it doesn't support resolving module/virtual modules in script src in dev mode
 const resolveRewindInject = cached(() =>
@@ -646,4 +646,38 @@ export const renderHtml = async ({ routePath, path, components, pagesContext, pa
 	})
 
 	return HTMLRenderer.serialize(renderResult)
+}
+
+export const renderPageContent = async ({ routePath, path, components, pagesContext, pageMeta }) => {
+	const ctx = buildPageContext({
+		routePath,
+		path,
+		pageMeta,
+		pagesContext
+	})
+
+	await compilePageMdx(pageMeta, pagesContext, { ctx })
+
+	const prevHydration = getReframeHydrationEnabled()
+	const prevThemeHydration = state.THEME_ENV?.getHydrationEnabled?.()
+	setReframeHydrationEnabled(false)
+	state.THEME_ENV?.setHydrationEnabled?.(false)
+	try {
+		const mdxComponent = pageMeta.mdxComponent
+		const PageContent = ({ components: extraComponents, ...props }, ...children) =>
+			mdxComponent({
+				children,
+				...props,
+				components: {
+					...components,
+					...extraComponents
+				}
+			})
+		return HTMLRenderer.serialize(HTMLRenderer.c(PageContent))
+	} finally {
+		setReframeHydrationEnabled(prevHydration)
+		if (prevThemeHydration != null) {
+			state.THEME_ENV?.setHydrationEnabled?.(prevThemeHydration)
+		}
+	}
 }

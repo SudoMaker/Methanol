@@ -52,6 +52,8 @@ const cliOverrides = {
 	CLI_BASE: cli.CLI_BASE,
 	CLI_SEARCH: cli.CLI_SEARCH,
 	CLI_THEME: cli.CLI_THEME,
+	CLI_RSS: cli.CLI_RSS,
+	CLI_ATOM: cli.CLI_ATOM,
 	CLI_PWA: cli.CLI_PWA
 }
 
@@ -805,6 +807,20 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 	const languages = collectLanguagesFromPages(pageList)
 	const userSite = state.USER_SITE || {}
 	const siteBase = state.VITE_BASE ?? userSite.base ?? null
+	const feedPathValue = state.RSS_OPTIONS?.path
+	const isAtomFeed = Boolean(state.RSS_OPTIONS?.atom)
+	const defaultFeedPath = isAtomFeed ? '/atom.xml' : '/rss.xml'
+	const feedPath = typeof feedPathValue === 'string' && feedPathValue.trim()
+		? (feedPathValue.trim().startsWith('/') ? feedPathValue.trim() : `/${feedPathValue.trim()}`)
+		: defaultFeedPath
+	const feed = state.RSS_ENABLED
+		? {
+				enabled: true,
+				atom: isAtomFeed,
+				path: feedPath,
+				href: withBase(feedPath)
+			}
+		: { enabled: false }
 	const site = {
 		...userSite,
 		base: siteBase,
@@ -820,6 +836,7 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 			options: state.PAGEFIND_OPTIONS || null,
 			build: state.PAGEFIND_BUILD || null
 		},
+		feed,
 		generatedAt: new Date().toISOString()
 	}
 	const excludedDirPaths = new Set(Array.from(dirExcludes).map((dir) => `/${dir}`))

@@ -38,7 +38,7 @@ import {
 } from './components.js'
 import { buildPagesContext, buildPageEntry, routePathFromFile } from './pages.js'
 import { compilePageMdx, renderHtml } from './mdx.js'
-import { DevErrorPage } from './error-page.jsx'
+import { DevErrorPage } from './templates/error-page.jsx'
 import { HTMLRenderer } from './renderer.js'
 import { methanolResolverPlugin } from './vite-plugins.js'
 import { preparePublicAssets, updateAsset } from './public-assets.js'

@@ -201,6 +201,37 @@ const handleRender = async (message) => {
 	return results
 }
 
+const handleRss = async (message) => {
+	const { ids = [], stage } = message || {}
+	const { renderPageContent } = await import('../mdx.js')
+	const results = []
+	let completed = 0
+	for (const id of ids) {
+		const page = pages[id]
+		if (!page) {
+			completed += 1
+			parentPort?.postMessage({ type: 'progress', stage, completed })
+			continue
+		}
+		try {
+			const content = await renderPageContent({
+				routePath: page.routePath,
+				path: page.path,
+				components,
+				pagesContext,
+				pageMeta: page
+			})
+			results.push({ id, content })
+		} catch (error) {
+			logPageError('RSS render', page, error)
+			throw error
+		}
+		completed += 1
+		parentPort?.postMessage({ type: 'progress', stage, completed })
+	}
+	return results
+}
+
 parentPort?.on('message', async (message) => {
 	const { type, stage } = message || {}
 	try {
@@ -222,6 +253,11 @@ parentPort?.on('message', async (message) => {
 		}
 		if (type === 'render') {
 			const results = await handleRender(message)
+			parentPort?.postMessage({ type: 'done', stage, results })
+			return
+		}
+		if (type === 'rss') {
+			const results = await handleRss(message)
 			parentPort?.postMessage({ type: 'done', stage, results })
 			return
 		}

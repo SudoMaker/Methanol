@@ -98,6 +98,7 @@ export const buildHtmlEntries = async () => {
 	const { workers, assignments } = createBuildWorkers(totalPages)
 	const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
 	const excludedDirs = Array.from(pagesContext.excludedDirs || [])
+	const rssContent = new Map()
 	try {
 		await runWorkerStage({
 			workers,
@@ -163,7 +164,6 @@ export const buildHtmlEntries = async () => {
 				}
 			}))
 		})
-
 		const renderToken = stageLogger.start('Rendering pages')
 		completed = 0
 		const rendered = await runWorkerStage({
@@ -185,6 +185,34 @@ export const buildHtmlEntries = async () => {
 			collect: (message) => message.results || []
 		})
 		stageLogger.end(renderToken)
+
+		if (state.RSS_ENABLED) {
+			const rssToken = stageLogger.start('Rendering Feed')
+			completed = 0
+			const rssResults = await runWorkerStage({
+				workers,
+				stage: 'rss',
+				messages: workers.map((worker, index) => ({
+					worker,
+					message: {
+						type: 'rss',
+						stage: 'rss',
+						ids: assignments[index]
+					}
+				})),
+				onProgress: (count) => {
+					if (!logEnabled) return
+					completed = count
+					stageLogger.update(rssToken, `Rendering Feed [${completed}/${totalPages}]`)
+				},
+				collect: (message) => message.results || []
+			})
+			for (const item of rssResults || []) {
+				if (!item || typeof item.id !== 'number') continue
+				rssContent.set(item.id, item.content || '')
+			}
+			stageLogger.end(rssToken)
+		}
 
 		for (const item of rendered) {
 			const page = pages[item.id]
@@ -238,7 +266,7 @@ export const buildHtmlEntries = async () => {
 		}
 	}
 
-	return { entry, htmlCache, pagesContext }
+	return { entry, htmlCache, pagesContext, rssContent }
 }
 
 export const runViteBuild = async (entry, htmlCache) => {

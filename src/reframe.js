@@ -45,6 +45,7 @@ export function env(parentEnv) {
 	let parent = parentEnv || null
 
 	let renderCount = 0
+	let hydrationEnabled = true
 
 	function register(info) {
 		const { clientPath, staticPath, staticImportURL, exportName } = info
@@ -62,9 +63,14 @@ export function env(parentEnv) {
 
 		const component = async ({ children: childrenProp, ...props }, ...children) => {
 			const id = renderCount++
-			const idStr = id.toString(16)
 
 			const staticComponent = (await import(staticImportURL)).default
+
+			if (!getHydrationEnabled()) {
+				return (R) => (staticComponent ? R.c(staticComponent, props, ...children) : null)
+			}
+
+			const idStr = id.toString(16)
 			const script = `$$rfrm(${JSON.stringify(key)},${id},${Object.keys(props).length ? JSON5.stringify(props).replace(/<\/script/ig, '<\\/script') : '{}'})`
 
 			return (R) => {
@@ -101,9 +107,18 @@ export function env(parentEnv) {
 		parent = nextParent || null
 	}
 
+	function setHydrationEnabled(value) {
+		hydrationEnabled = value !== false
+	}
+
+	function getHydrationEnabled() {
+		if (hydrationEnabled === false) return false
+		return parent?.getHydrationEnabled?.() !== false
+	}
+
 	function resetRenderCount() {
 		renderCount = 0
-		parent?.resetRenderCount()
+		parent?.resetRenderCount?.()
 	}
 
 	function getMergedRegistry() {
@@ -123,6 +138,8 @@ export function env(parentEnv) {
 		genRegistryScript,
 		setParent,
 		resetRenderCount,
+		setHydrationEnabled,
+		getHydrationEnabled,
 		get registry() {
 			return getMergedRegistry()
 		}

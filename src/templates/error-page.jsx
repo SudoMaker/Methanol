@@ -18,11 +18,11 @@
  * under the License.
  */
 
-import { HTMLRenderer as R } from './renderer.js'
+import { DOCTYPE_HTML } from 'methanol'
 
 export const DevErrorPage = ({ message = '', basePrefix = ''} = {}) => (
 	<>
-		{R.rawHTML`<!doctype html>`}
+		{DOCTYPE_HTML}
 		<html lang="en">
 			<head>
 				<meta charset="UTF-8" />

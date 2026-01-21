@@ -61,6 +61,10 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 	const htmlLang = typeof languageCode === 'string' && languageCode.trim() ? languageCode : 'en'
 	const pagefindEnabled = ctx.site.pagefind?.enabled !== false
 	const pagefindOptions = ctx.site.pagefind?.options || null
+	const feedInfo = ctx.site.feed
+	const rssHref = feedInfo?.enabled ? feedInfo.href : null
+	const feedType = feedInfo?.atom ? 'application/atom+xml' : 'application/rss+xml'
+	const feedLabel = feedInfo?.atom ? 'Atom' : 'RSS'
 	const repoBase = ctx.site.repoBase
 	const sourceUrl = pageFrontmatter.sourceURL
 	const editUrl = sourceUrl || (repoBase && page.relativePath ? new URL(page.relativePath, repoBase).href : null)
@@ -124,6 +128,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 					{twitterTitle ? <meta name="twitter:title" content={twitterTitle} /> : null}
 					{twitterDescription ? <meta name="twitter:description" content={twitterDescription} /> : null}
 					{twitterImage ? <meta name="twitter:image" content={twitterImage} /> : null}
+					{rssHref ? <link rel="alternate" type={feedType} title={`${siteName} ${feedLabel}`} href={rssHref} /> : null}
 					<link
 						rel="preload stylesheet"
 						as="style"
@@ -207,6 +212,11 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 								{languageSelector}
 								<ThemeColorSwitch />
 								<ThemeAccentSwitch />
+								{rssHref ? (
+									<a class="rss-link" href={rssHref}>
+										{feedLabel}
+									</a>
+								) : null}
 							</div>
 						</aside>
 						<main class="main-content" data-pagefind-body={pagefindEnabled ? '' : null}>

@@ -191,6 +191,28 @@ const resolvePagefindBuild = (config) => {
 	return null
 }
 
+const resolveFeedEnabled = (config) => {
+	if (config?.feed == null) return false
+	if (typeof config.feed === 'boolean') return config.feed
+	if (typeof config.feed === 'object') {
+		if (hasOwn(config.feed, 'enabled')) {
+			return config.feed.enabled !== false
+		}
+		return true
+	}
+	return false
+}
+
+const resolveFeedOptions = (config) => {
+	const value = config?.feed
+	if (!value || typeof value !== 'object') return null
+	const { enabled, ...rest } = value
+	if (Object.keys(rest).length) {
+		return { ...rest }
+	}
+	return null
+}
+
 const resolveStarryNightConfig = (value) => {
 	if (value == null) return { enabled: true, options: null }
 	if (typeof value === 'boolean') {
@@ -426,6 +448,18 @@ export const applyConfig = async (config, mode) => {
 	}
 	state.PAGEFIND_OPTIONS = resolvePagefindOptions(config)
 	state.PAGEFIND_BUILD = resolvePagefindBuild(config)
+
+	state.RSS_ENABLED = resolveFeedEnabled(config)
+	if (cli.CLI_RSS !== undefined) {
+		state.RSS_ENABLED = cli.CLI_RSS
+	}
+	state.RSS_OPTIONS = resolveFeedOptions(config)
+	if (cli.CLI_ATOM !== undefined) {
+		if (cli.CLI_ATOM === true) {
+			state.RSS_ENABLED = true
+		}
+		state.RSS_OPTIONS = { ...(state.RSS_OPTIONS || {}), atom: cli.CLI_ATOM }
+	}
 	
 	if (hasOwn(config, 'pwa')) {
 		if (config.pwa === true) {

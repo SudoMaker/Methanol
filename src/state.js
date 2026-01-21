@@ -136,6 +136,16 @@ const withCommonOptions = (y) =>
 			requiresArg: true,
 			nargs: 1
 		})
+		.option('rss', {
+			describe: 'Enable or disable feed output',
+			type: 'boolean',
+			default: undefined
+		})
+		.option('atom', {
+			describe: 'Output Atom feed instead of RSS',
+			type: 'boolean',
+			default: undefined
+		})
 		.option('pwa', {
 			describe: 'Enable or disable PWA support',
 			type: 'boolean',
@@ -174,6 +184,8 @@ export const cli = {
 	CLI_BASE: argv.base || null,
 	CLI_SEARCH: typeof argv.search === 'boolean' ? argv.search : undefined,
 	CLI_THEME: argv.theme || null,
+	CLI_RSS: typeof argv.rss === 'boolean' ? argv.rss : undefined,
+	CLI_ATOM: typeof argv.atom === 'boolean' ? argv.atom : undefined,
 	CLI_PWA: typeof argv.pwa === 'boolean' ? argv.pwa : undefined
 }
 
@@ -204,6 +216,8 @@ export const state = {
 	PAGEFIND_ENABLED: false,
 	PAGEFIND_OPTIONS: null,
 	PAGEFIND_BUILD: null,
+	RSS_ENABLED: false,
+	RSS_OPTIONS: null,
 	PWA_ENABLED: false,
 	USER_PRE_BUILD_HOOKS: [],
 	USER_POST_BUILD_HOOKS: [],
