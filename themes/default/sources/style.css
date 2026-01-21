@@ -471,14 +471,30 @@ a {
 	}
 
 	.sidebar-footer .rss-link {
-		font-size: 0.8rem;
-		color: var(--text-muted);
-		text-decoration: none;
-		padding: 0 0.25rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		background: var(--surface-muted);
+		border: 1px solid var(--border);
+		border-radius: var(--radius);
+		color: var(--text);
+		transition: all 0.2s ease;
+		flex-shrink: 0;
 	}
 
 	.sidebar-footer .rss-link:hover {
-		color: var(--text);
+		background: var(--hover-bg);
+		border-color: var(--muted);
+	}
+
+	.sidebar-footer .rss-link:active {
+		transform: scale(0.96);
+	}
+
+	.sidebar-footer .rss-link svg {
+		opacity: 0.8;
 	}
 
 	.lang-switch-wrapper {

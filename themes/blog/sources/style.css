@@ -99,16 +99,20 @@ a {
 }
 
 .header-actions .rss-link {
-	color: inherit;
+	color: var(--text-muted);
 	text-decoration: none;
-	font-size: 0.9rem;
-	padding: 0.25rem 0.5rem;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 2.25rem;
+	height: 2.25rem;
 	border-radius: 999px;
-	border: 1px solid var(--border-color, rgba(0, 0, 0, 0.1));
+	transition: all 0.2s;
 }
 
 .header-actions .rss-link:hover {
-	border-color: currentColor;
+	color: var(--text);
+	background: var(--bg-soft);
 }
 
 .blog-nav {
