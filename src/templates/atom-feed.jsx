@@ -45,6 +45,11 @@ const AtomFeed = ({ site, items }) => {
 							<id>{item.link}</id>
 							{item.description ? <summary>{item.description}</summary> : null}
 							{item.content ? <content type="html">{item.content}</content> : null}
+							{item.author ? (
+								<author>
+									<name>{item.author}</name>
+								</author>
+							) : null}
 							{item.updated ? <updated>{item.updated}</updated> : null}
 						</entry>
 					))

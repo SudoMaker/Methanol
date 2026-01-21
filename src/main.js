@@ -78,6 +78,7 @@ const main = async () => {
 			...userSite,
 			base: siteBase,
 			name: state.SITE_NAME,
+			owner: state.SITE_OWNER,
 			root: state.ROOT_DIR,
 			pagesDir: state.PAGES_DIR,
 			componentsDir: state.COMPONENTS_DIR,

@@ -75,6 +75,12 @@ const withCommonOptions = (y) =>
 			requiresArg: true,
 			nargs: 1
 		})
+		.option('owner', {
+			describe: 'Site owner override',
+			type: 'string',
+			requiresArg: true,
+			nargs: 1
+		})
 		.option('port', {
 			describe: 'Port for dev/preview',
 			type: 'number',
@@ -178,6 +184,7 @@ export const cli = {
 	CLI_OUTPUT_DIR: argv.output || null,
 	CLI_CONFIG_PATH: argv.config || null,
 	CLI_SITE_NAME: argv['site-name'] || null,
+	CLI_OWNER: argv.owner || null,
 	CLI_CODE_HIGHLIGHTING: typeof argv.highlight === 'boolean' ? argv.highlight : null,
 	CLI_JOBS: typeof argv.jobs === 'number' && Number.isFinite(argv.jobs) ? argv.jobs : null,
 	CLI_VERBOSE: Boolean(argv.verbose),
@@ -193,6 +200,7 @@ export const state = {
 	PROJECT_ROOT,
 	ROOT_DIR: PROJECT_ROOT,
 	SITE_NAME: 'Methanol Site',
+	SITE_OWNER: null,
 	SITE_BASE: null,
 	VITE_BASE: null,
 	PAGES_DIR: resolve(PROJECT_ROOT, 'pages'),

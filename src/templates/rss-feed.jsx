@@ -47,6 +47,7 @@ const RssFeed = ({ site, items }) => {
 								<guid isPermaLink="true">{item.link}</guid>
 								{item.description ? <description>{item.description}</description> : null}
 								{item.content ? <content:encoded>{item.content}</content:encoded> : null}
+								{item.author ? <author>{item.author}</author> : null}
 								{item.pubDate ? <pubDate>{item.pubDate}</pubDate> : null}
 							</item>
 						))

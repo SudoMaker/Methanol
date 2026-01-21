@@ -79,7 +79,7 @@ const resolveSiteUrl = (options, site) => {
 	return null
 }
 
-const buildItem = (page, siteUrl, htmlContent = null, isAtom = false) => {
+const buildItem = (page, siteUrl, htmlContent = null, isAtom = false, siteOwner = null) => {
 	if (!page) return null
 	const href = page.routeHref || withBase(page.routePath)
 	if (!href) return null
@@ -92,6 +92,10 @@ const buildItem = (page, siteUrl, htmlContent = null, isAtom = false) => {
 			? HTMLRenderer.rawHTML(escapeXml(contentSource))
 			: HTMLRenderer.rawHTML(wrapCdata(contentSource)))
 		: null
+	const authorValue = page.frontmatter?.author
+	const author = Array.isArray(authorValue)
+		? authorValue.filter(Boolean).join(', ')
+		: authorValue || siteOwner || null
 	const pubDate = page.date ? new Date(page.date).toUTCString() : null
 	const updated = page.date ? new Date(page.date).toISOString() : null
 	return {
@@ -99,6 +103,7 @@ const buildItem = (page, siteUrl, htmlContent = null, isAtom = false) => {
 		link,
 		description,
 		content,
+		author,
 		pubDate,
 		updated
 	}
@@ -174,12 +179,13 @@ export const generateRssFeed = async (pagesContext, rssContent = null) => {
 		updated: now.toISOString()
 	}
 	const pages = selectFeedPages(pagesContext?.pages || [], options)
+	const siteOwner = site.owner || null
 	const items = pages
 		.map((page) => ({
 			page,
 			content: rssContent?.get(page.path) || rssContent?.get(page.routePath) || null
 		}))
-		.map((entry) => buildItem(entry.page, siteUrl, entry.content, isAtom))
+		.map((entry) => buildItem(entry.page, siteUrl, entry.content, isAtom, siteOwner))
 		.filter(Boolean)
 	const xml = isAtom
 		? renderAtomFeed({ site: finalSite, items })

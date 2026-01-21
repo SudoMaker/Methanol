@@ -323,10 +323,15 @@ export const applyConfig = async (config, mode) => {
 	state.ROOT_DIR = root
 	const configSiteName = cli.CLI_SITE_NAME ?? config.site?.name ?? null
 	state.SITE_NAME = configSiteName || basename(root) || 'Methanol Site'
+	const configOwner = cli.CLI_OWNER ?? config.site?.owner ?? null
+	state.SITE_OWNER = configOwner ? String(configOwner) : null
 	const userSite = config.site && typeof config.site === 'object' ? { ...config.site } : null
 	const siteBase = normalizeSiteBase(cli.CLI_BASE || userSite?.base)
 	state.SITE_BASE = siteBase
 	if (userSite) {
+		if (configOwner != null) {
+			userSite.owner = String(configOwner)
+		}
 		if (siteBase == null) {
 			delete userSite.base
 		} else {

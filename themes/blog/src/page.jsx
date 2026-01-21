@@ -75,11 +75,11 @@ const Header = ({ siteName, navLinks, components, pagefindOptions, rssHref, feed
 	)
 }
 
-const Footer = ({ siteName }) => (
+const Footer = ({ siteName, owner }) => (
 	<footer class="blog-footer">
 		<div class="container">
 			<p>
-				&copy; {new Date().getFullYear()} {siteName}. Powered by <a href="https://methanol.sudoMaker.com">Methanol</a>.
+				&copy; {new Date().getFullYear()} {owner || siteName}. Powered by <a href="https://methanol.sudoMaker.com">Methanol</a>.
 			</p>
 		</div>
 	</footer>
@@ -88,6 +88,7 @@ const Footer = ({ siteName }) => (
 const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) => {
 	const page = ctx.page
 	const siteName = ctx.site.name || 'Methanol Blog'
+	const siteOwner = ctx.site.owner || null
 	const title = page.title || siteName
 
 	const isHome = page.routePath === '/'
@@ -189,7 +190,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 								<LayoutPost PageContent={PageContent} title={title} page={page} />
 							)}
 						</main>
-						<Footer siteName={siteName} />
+						<Footer siteName={siteName} owner={siteOwner} />
 					</div>
 				</body>
 			</html>
