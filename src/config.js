@@ -23,6 +23,7 @@ import { existsSync } from 'fs'
 import { resolve, isAbsolute, extname, basename, dirname } from 'path'
 import { pathToFileURL, fileURLToPath } from 'url'
 import { mergeConfig } from 'vite'
+import { isMainThread } from 'worker_threads'
 import { projectRequire } from './node-loader.js'
 import { cli, state } from './state.js'
 import { logger } from './logger.js'
@@ -122,6 +123,7 @@ const normalizeViteBase = (value) => {
 }
 
 const warnDevBase = (value) => {
+	if (!isMainThread) return
 	if (devBaseWarningShown) return
 	devBaseWarningShown = true
 	const label = value ? ` (received "${value}")` : ''
