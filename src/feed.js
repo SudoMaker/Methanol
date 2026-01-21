@@ -47,6 +47,12 @@ const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
 }
 
+const resolveFeedLimit = (options) => {
+	return typeof options?.limit === 'number' && Number.isFinite(options.limit)
+		? Math.max(0, Math.floor(options.limit))
+		: DEFAULT_RSS_LIMIT
+}
+
 const wrapCdata = (value) => {
 	const text = value == null ? '' : String(value)
 	if (!text) return ''
@@ -105,6 +111,15 @@ const getSortTime = (page) => {
 	return Number.isNaN(time) ? 0 : time
 }
 
+export const selectFeedPages = (pages, options) => {
+	const limit = resolveFeedLimit(options)
+	if (!limit) return []
+	return (Array.isArray(pages) ? pages : [])
+		.filter((page) => page && !page.hidden)
+		.sort((a, b) => getSortTime(b) - getSortTime(a))
+		.slice(0, limit)
+}
+
 export const renderRssFeed = ({ site, items }) => {
 	const prevHydration = getReframeHydrationEnabled()
 	const prevThemeHydration = state.THEME_ENV?.getHydrationEnabled?.()
@@ -146,10 +161,6 @@ export const generateRssFeed = async (pagesContext, rssContent = null) => {
 	}
 	const isAtom = options.atom === true
 	const path = normalizeFeedPath(options.path, isAtom)
-	const limit =
-		typeof options.limit === 'number' && Number.isFinite(options.limit)
-			? Math.max(0, Math.floor(options.limit))
-			: DEFAULT_RSS_LIMIT
 	const now = new Date()
 	const finalSite = {
 		name: site.name,
@@ -162,16 +173,14 @@ export const generateRssFeed = async (pagesContext, rssContent = null) => {
 		lastBuildDate: now.toUTCString(),
 		updated: now.toISOString()
 	}
-	const items = (pagesContext?.pages || [])
-		.map((page, index) => ({
+	const pages = selectFeedPages(pagesContext?.pages || [], options)
+	const items = pages
+		.map((page) => ({
 			page,
-			content: rssContent?.get(index) || null
+			content: rssContent?.get(page.path) || rssContent?.get(page.routePath) || null
 		}))
-		.filter((entry) => entry.page && !entry.page.hidden)
-		.sort((a, b) => getSortTime(b.page) - getSortTime(a.page))
 		.map((entry) => buildItem(entry.page, siteUrl, entry.content, isAtom))
 		.filter(Boolean)
-		.slice(0, limit)
 	const xml = isAtom
 		? renderAtomFeed({ site: finalSite, items })
 		: renderRssFeed({ site: finalSite, items })

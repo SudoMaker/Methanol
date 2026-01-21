@@ -40,9 +40,9 @@ const renderPostCards = (posts = []) =>
 		)
 	})
 
-export const LayoutCategories = ({ PageContent, title, pages, navLinks, components }) => {
+export const LayoutCategories = ({ PageContent, title, pages, navLinks, components, currentRoutePath, hiddenPrefixes }) => {
 	const { CategoryView } = components || {}
-	const filteredPosts = filterBlogPosts(pages, navLinks)
+	const filteredPosts = filterBlogPosts(pages, navLinks, { currentRoutePath, hiddenPrefixes })
 	const staticPosts = mapStaticPosts(filteredPosts)
 	const categories = collectCategories(filteredPosts)
 	const visiblePosts = staticPosts.slice(0, 10)

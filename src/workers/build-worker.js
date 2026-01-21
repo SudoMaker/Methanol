@@ -28,6 +28,7 @@ let initPromise = null
 let pages = []
 let pagesContext = null
 let components = null
+let mdxPageIds = new Set()
 
 const ensureInit = async () => {
 	if (initPromise) return initPromise
@@ -112,31 +113,27 @@ const logPageError = (phase, page, error) => {
 const handleSetPages = async (message) => {
 	const { pages: nextPages, excludedRoutes = [], excludedDirs = [] } = message || {}
 	pages = Array.isArray(nextPages) ? nextPages : []
+	mdxPageIds = new Set()
 	await rebuildPagesContext(new Set(excludedRoutes), new Set(excludedDirs))
 }
 
 const handleSyncUpdates = async (message) => {
-	const { updates = [], titles = null, excludedRoutes = null, excludedDirs = null } = message || {}
-	if (Array.isArray(titles)) {
-		for (let i = 0; i < titles.length; i += 1) {
-			const page = pages[i]
-			if (!page) continue
-			if (titles[i] !== undefined) {
-				page.title = titles[i]
-			}
-		}
-	}
+	const { updates = [], excludedRoutes = null, excludedDirs = null } = message || {}
 	for (const update of updates) {
 		const page = pages[update.id]
 		if (!page) continue
 		if (update.title !== undefined) page.title = update.title
-		if (update.toc !== undefined) page.toc = update.toc
 	}
-	await rebuildPagesContext(
-		excludedRoutes ? new Set(excludedRoutes) : pagesContext?.excludedRoutes || new Set(),
-		excludedDirs ? new Set(excludedDirs) : pagesContext?.excludedDirs || new Set()
-	)
-	for (const page of pages) {
+	if (!pagesContext || excludedRoutes || excludedDirs) {
+		await rebuildPagesContext(
+			excludedRoutes ? new Set(excludedRoutes) : pagesContext?.excludedRoutes || new Set(),
+			excludedDirs ? new Set(excludedDirs) : pagesContext?.excludedDirs || new Set()
+		)
+	} else {
+		pagesContext.refreshPagesTree?.(true)
+	}
+	for (const id of mdxPageIds) {
+		const page = pages[id]
 		if (!page?.mdxCtx) continue
 		refreshMdxCtx(page)
 	}
@@ -159,6 +156,7 @@ const handleCompile = async (message) => {
 				lazyPagesTree: true,
 				refreshPagesTree: false
 			})
+			mdxPageIds.add(id)
 			updates.push({ id, title: page.title, toc: page.toc || null })
 		} catch (error) {
 			logPageError('MDX compile', page, error)
@@ -173,7 +171,6 @@ const handleCompile = async (message) => {
 const handleRender = async (message) => {
 	const { ids = [], stage } = message || {}
 	const { renderHtml } = await import('../mdx.js')
-	const results = []
 	let completed = 0
 	for (const id of ids) {
 		const page = pages[id]
@@ -190,7 +187,7 @@ const handleRender = async (message) => {
 				pagesContext,
 				pageMeta: page
 			})
-			results.push({ id, html })
+			parentPort?.postMessage({ type: 'result', stage, result: { id, html } })
 		} catch (error) {
 			logPageError('MDX render', page, error)
 			throw error
@@ -198,13 +195,11 @@ const handleRender = async (message) => {
 		completed += 1
 		parentPort?.postMessage({ type: 'progress', stage, completed })
 	}
-	return results
 }
 
 const handleRss = async (message) => {
 	const { ids = [], stage } = message || {}
 	const { renderPageContent } = await import('../mdx.js')
-	const results = []
 	let completed = 0
 	for (const id of ids) {
 		const page = pages[id]
@@ -221,7 +216,7 @@ const handleRss = async (message) => {
 				pagesContext,
 				pageMeta: page
 			})
-			results.push({ id, content })
+			parentPort?.postMessage({ type: 'result', stage, result: { id, content } })
 		} catch (error) {
 			logPageError('RSS render', page, error)
 			throw error
@@ -229,7 +224,6 @@ const handleRss = async (message) => {
 		completed += 1
 		parentPort?.postMessage({ type: 'progress', stage, completed })
 	}
-	return results
 }
 
 parentPort?.on('message', async (message) => {
@@ -252,13 +246,13 @@ parentPort?.on('message', async (message) => {
 			return
 		}
 		if (type === 'render') {
-			const results = await handleRender(message)
-			parentPort?.postMessage({ type: 'done', stage, results })
+			await handleRender(message)
+			parentPort?.postMessage({ type: 'done', stage })
 			return
 		}
 		if (type === 'rss') {
-			const results = await handleRss(message)
-			parentPort?.postMessage({ type: 'done', stage, results })
+			await handleRss(message)
+			parentPort?.postMessage({ type: 'done', stage })
 			return
 		}
 	} catch (error) {

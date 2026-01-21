@@ -108,8 +108,20 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 		return link
 	})
 
+	const currentRoutePath = page.routePath || '/'
 	const isCategoriesPage = page.routePath === '/categories'
 	const isCollectionsPage = page.routePath === '/collections'
+	const hiddenPrefixes = (ctx.pages || [])
+		.filter(
+			(entry) =>
+				entry.isIndex &&
+				entry.hidden &&
+				entry.routePath &&
+				entry.routePath !== '/' &&
+				entry.routePath !== '/404' &&
+				entry.routePath !== '/offline'
+		)
+		.map((entry) => (entry.routePath.endsWith('/') ? entry.routePath : `${entry.routePath}/`))
 
 	const pagefindEnabled = ctx.site.pagefind?.enabled !== false
 	const pagefindOptions = ctx.site.pagefind?.options || null
@@ -144,7 +156,14 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 						/>
 						<main class="container main-content">
 							{isHome ? (
-								<LayoutHome PageContent={PageContent} pages={ctx.pages} navLinks={navLinks} components={components} />
+								<LayoutHome
+									PageContent={PageContent}
+									pages={ctx.pages}
+									navLinks={navLinks}
+									components={components}
+									currentRoutePath={currentRoutePath}
+									hiddenPrefixes={hiddenPrefixes}
+								/>
 							) : isCategoriesPage ? (
 								<LayoutCategories
 									PageContent={PageContent}
@@ -152,6 +171,8 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 									pages={ctx.pages}
 									navLinks={navLinks}
 									components={components}
+									currentRoutePath={currentRoutePath}
+									hiddenPrefixes={hiddenPrefixes}
 								/>
 							) : isCollectionsPage ? (
 								<LayoutCollections
@@ -161,6 +182,8 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 									pagesByRoute={ctx.pagesByRoute}
 									navLinks={navLinks}
 									components={components}
+									currentRoutePath={currentRoutePath}
+									hiddenPrefixes={hiddenPrefixes}
 								/>
 							) : (
 								<LayoutPost PageContent={PageContent} title={title} page={page} />

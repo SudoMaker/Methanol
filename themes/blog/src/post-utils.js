@@ -29,15 +29,25 @@ const isBlogPost = (page) => {
 	return true
 }
 
-export const filterBlogPosts = (pages, navLinks = []) => {
+export const filterBlogPosts = (pages, navLinks = [], options = {}) => {
 	const excluded = new Set((navLinks || []).map((link) => link?.href).filter(Boolean))
 	const list = (pages || []).filter((page) => isBlogPost(page) && !excluded.has(page.routeHref))
-	list.sort((a, b) => {
+	const { currentRoutePath, hiddenPrefixes } = options || {}
+	const activeRoute = typeof currentRoutePath === 'string' ? currentRoutePath : ''
+	const hiddenScopes = Array.isArray(hiddenPrefixes) ? hiddenPrefixes.filter(Boolean) : []
+	const filtered = hiddenScopes.length
+		? list.filter((page) => {
+				const hiddenScope = hiddenScopes.find((prefix) => page.routePath?.startsWith(prefix))
+				if (!hiddenScope) return true
+				return activeRoute.startsWith(hiddenScope)
+			})
+		: list
+	filtered.sort((a, b) => {
 		const dateA = new Date(a.frontmatter?.date || a.stats?.createdAt || 0)
 		const dateB = new Date(b.frontmatter?.date || b.stats?.createdAt || 0)
 		return dateB - dateA
 	})
-	return list
+	return filtered
 }
 
 export const getExcerpt = (page) => extractExcerpt(page)

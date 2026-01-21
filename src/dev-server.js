@@ -251,6 +251,10 @@ export const runViteDev = async () => {
 			})
 			if (token !== pagesContextToken) return
 
+			const titleUpdates = updates
+				.filter((update) => update && update.title !== undefined)
+				.map((update) => ({ id: update.id, title: update.title }))
+
 			for (const update of updates) {
 				const page = pages[update.id]
 				if (!page) continue
@@ -266,7 +270,6 @@ export const runViteDev = async () => {
 			invalidateHtmlCache()
 			const renderEpoch = htmlCacheEpoch
 
-			const titleSnapshot = pages.map((page) => page.title)
 			await runWorkerStage({
 				workers,
 				stage: 'sync',
@@ -275,8 +278,7 @@ export const runViteDev = async () => {
 					message: {
 						type: 'sync',
 						stage: 'sync',
-						updates,
-						titles: titleSnapshot
+						updates: titleUpdates
 					}
 				}))
 			})

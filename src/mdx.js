@@ -28,7 +28,7 @@ import rehypeStarryNight from 'rehype-starry-night'
 import { createStarryNight } from '@wooorm/starry-night'
 import remarkGfm from 'remark-gfm'
 import { HTMLRenderer } from './renderer.js'
-import { signal, computed, read, Suspense, nextTick } from 'refui'
+import { Suspense, nextTick } from 'refui'
 import { createPortal } from 'refui/extras'
 import { pathToFileURL } from 'url'
 import { existsSync } from 'fs'
@@ -145,27 +145,8 @@ export const buildPageContext = ({ routePath, path, pageMeta, pagesContext, lazy
 		getSiblings,
 		withBase
 	}
-	const resolvePagesTree = () =>
-		pagesContext.getPagesTree ? pagesContext.getPagesTree(routePath) : pagesContext.pagesTree || []
-	if (lazyPagesTree) {
-		let cachedTree = null
-		let hasTree = false
-		Object.defineProperty(ctx, 'pagesTree', {
-			enumerable: true,
-			get() {
-				if (!hasTree) {
-					cachedTree = resolvePagesTree()
-					hasTree = true
-				}
-				return cachedTree
-			},
-			set(value) {
-				cachedTree = value
-				hasTree = true
-			}
-		})
-	} else {
-		ctx.pagesTree = resolvePagesTree()
+	if (!lazyPagesTree) {
+		ctx.pagesTree = pagesContext.getPagesTree ? pagesContext.getPagesTree(routePath) : pagesContext.pagesTree || []
 	}
 	return ctx
 }
@@ -645,7 +626,9 @@ export const renderHtml = async ({ routePath, path, components, pagesContext, pa
 		)
 	})
 
-	return HTMLRenderer.serialize(renderResult)
+	const result = HTMLRenderer.serialize(renderResult)
+
+	return result
 }
 
 export const renderPageContent = async ({ routePath, path, components, pagesContext, pageMeta }) => {
@@ -662,18 +645,25 @@ export const renderPageContent = async ({ routePath, path, components, pagesCont
 	const prevThemeHydration = state.THEME_ENV?.getHydrationEnabled?.()
 	setReframeHydrationEnabled(false)
 	state.THEME_ENV?.setHydrationEnabled?.(false)
+	const mdxComponent = pageMeta.mdxComponent
+	const PageContent = () => mdxComponent()
+
 	try {
-		const mdxComponent = pageMeta.mdxComponent
-		const PageContent = ({ components: extraComponents, ...props }, ...children) =>
-			mdxComponent({
-				children,
-				...props,
-				components: {
-					...components,
-					...extraComponents
-				}
-			})
-		return HTMLRenderer.serialize(HTMLRenderer.c(PageContent))
+		const renderResult = await new Promise((resolve, reject) => {
+			const result = HTMLRenderer.c(
+				Suspense,
+				{
+					onLoad() {
+						nextTick(() => resolve(result))
+					},
+					catch({ error }) {
+						reject(error)
+					}
+				},
+				PageContent
+			)
+		})
+		return HTMLRenderer.serialize(renderResult)
 	} finally {
 		setReframeHydrationEnabled(prevHydration)
 		if (prevThemeHydration != null) {

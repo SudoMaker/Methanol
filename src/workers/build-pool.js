@@ -84,7 +84,7 @@ export const terminateWorkers = async (workers = []) => {
 	await Promise.all(workers.map((worker) => worker.terminate().catch(() => null)))
 }
 
-export const runWorkerStage = async ({ workers, stage, messages, onProgress, collect }) => {
+export const runWorkerStage = async ({ workers, stage, messages, onProgress, collect, onResult }) => {
 	return await new Promise((resolve, reject) => {
 		let completed = 0
 		let doneCount = 0
@@ -106,6 +106,12 @@ export const runWorkerStage = async ({ workers, stage, messages, onProgress, col
 				completed += 1
 				if (onProgress) {
 					onProgress(completed)
+				}
+				return
+			}
+			if (message.type === 'result') {
+				if (onResult) {
+					onResult(message.result)
 				}
 				return
 			}

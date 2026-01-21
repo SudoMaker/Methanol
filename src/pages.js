@@ -350,13 +350,15 @@ const buildPagesTree = (pages, options = {}) => {
 	const treePages = pages
 		.filter((page) => isUnderRoot(page))
 		.map((page) => {
-			if (!rootDir) return page
+			const originalDir = page.dir
+			if (!rootDir) return { ...page, originalDir }
 			const relativePath = stripRootPrefix(page.relativePath, rootDir)
 			const dir = stripRootPrefix(page.dir, rootDir)
 			const segments = page.segments.slice(rootSegments.length)
 			const depth = segments.length
 			return {
 				...page,
+				originalDir,
 				relativePath,
 				dir,
 				segments,
@@ -365,46 +367,6 @@ const buildPagesTree = (pages, options = {}) => {
 		})
 	const root = []
 	const dirs = new Map()
-	const hiddenDirs = new Set(
-		treePages
-			.filter((page) => page.isIndex && page.dir && page.hidden && !(includeHiddenRoot && page.routePath === rootPath))
-			.map((page) => page.dir)
-	)
-	const exposedHiddenDirs = new Set()
-	if (currentRoutePath && currentRoutePath !== '/' && hiddenDirs.size) {
-		for (const hiddenDir of hiddenDirs) {
-			const hiddenRoute = `/${hiddenDir}`
-			if (
-				currentRouteWithinRoot === hiddenRoute ||
-				currentRouteWithinRoot.startsWith(`${hiddenRoute}/`)
-			) {
-				exposedHiddenDirs.add(hiddenDir)
-			}
-		}
-	}
-	if (includeHiddenRoot && rootDir) {
-		for (const hiddenDir of Array.from(hiddenDirs)) {
-			if (rootDir === hiddenDir || rootDir.startsWith(`${hiddenDir}/`)) {
-				hiddenDirs.delete(hiddenDir)
-			}
-		}
-	}
-	if (exposedHiddenDirs.size) {
-		for (const hiddenDir of exposedHiddenDirs) {
-			hiddenDirs.delete(hiddenDir)
-		}
-	}
-	const isUnderHiddenDir = (dir) => {
-		if (!dir) return false
-		const parts = dir.split('/')
-		for (let i = 1; i <= parts.length; i++) {
-			const candidate = parts.slice(0, i).join('/')
-			if (hiddenDirs.has(candidate)) {
-				return true
-			}
-		}
-		return false
-	}
 	const getDirNode = (path, name, depth) => {
 		if (dirs.has(path)) return dirs.get(path)
 		const dir = {
@@ -418,64 +380,41 @@ const buildPagesTree = (pages, options = {}) => {
 			title: null,
 			weight: null,
 			date: null,
-			isRoot: false
+			isRoot: false,
+			hidden: false,
+			hiddenByFrontmatter: false
 		}
 		dirs.set(path, dir)
 		return dir
 	}
-	const isUnderExposedHiddenDir = (dir) => {
-		if (!dir || !exposedHiddenDirs.size) return false
-		for (const hiddenDir of exposedHiddenDirs) {
-			if (dir === hiddenDir || dir.startsWith(`${hiddenDir}/`)) {
-				return true
-			}
-		}
-		return false
-	}
 	for (const page of treePages) {
-		if (page.hidden && !(includeHiddenRoot && page.routePath === rootPath)) {
-			const isHiddenSpecial = page.routePath === '/404' || page.routePath === '/offline'
-			const shouldExposeHidden =
-				!isHiddenSpecial &&
-				page.hiddenByFrontmatter === true &&
-				(
-					page.routePath === currentRoutePath ||
-					(page.isIndex && page.dir && isUnderExposedHiddenDir(page.dir))
-				)
-			if (!shouldExposeHidden) {
-				continue
-			}
-		}
-		if (isUnderHiddenDir(page.dir)) {
-			continue
-		}
+		const isRootIndex = page.isRoot && page.isIndex
+		const promoteRoot = rootPath === '/' && isRootIndex && page.routePath !== '/'
 		const parts = page.relativePath.split('/')
 		parts.pop()
 		let cursor = root
 		let currentPath = ''
-		for (const part of parts) {
-			currentPath = currentPath ? `${currentPath}/${part}` : part
-			if (hiddenDirs.has(currentPath)) {
-				cursor = null
-				break
+		if (!promoteRoot) {
+			for (const part of parts) {
+				currentPath = currentPath ? `${currentPath}/${part}` : part
+				const dir = getDirNode(currentPath, part, currentPath.split('/').length)
+				if (!cursor.includes(dir)) {
+					cursor.push(dir)
+				}
+				cursor = dir.children
 			}
-			const dir = getDirNode(currentPath, part, currentPath.split('/').length)
-			if (!cursor.includes(dir)) {
-				cursor.push(dir)
-			}
-			cursor = dir.children
 		}
-		if (!cursor) {
-			continue
-		}
-		if (page.isIndex && page.dir) {
-			const dir = getDirNode(page.dir, page.dir.split('/').pop(), page.depth)
+		const dirPath = page.dir || ''
+		if (page.isIndex && dirPath && !page.isRoot) {
+			const dir = getDirNode(dirPath, dirPath.split('/').pop() || '', dirPath ? dirPath.split('/').length : 0)
 			dir.routePath = page.routePath
 			dir.routeHref = page.routeHref
 			dir.title = page.title
 			dir.weight = page.weight ?? null
 			dir.date = page.date ?? null
 			dir.isRoot = page.isRoot || false
+			dir.hidden = page.hidden || false
+			dir.hiddenByFrontmatter = page.hiddenByFrontmatter || false
 			dir.page = page
 			continue
 		}
@@ -773,36 +712,58 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 		}
 		return pagesByRoute.get(routePath) || null
 	}
-	const pagesTreeCache = new Map()
-	const navSequenceCache = new Map()
-	const getPagesTree = (routePath) => {
-		const rootPath = resolveRootPath(routePath, pagesByRoute)
-		const normalizedRoute = normalizeRoutePath(routePath || '/')
-		const cacheKey = `${rootPath}::${normalizedRoute}`
-		if (pagesTreeCache.has(cacheKey)) {
-			return pagesTreeCache.get(cacheKey)
-		}
-		const tree = buildPagesTree(pages, {
-			rootPath,
-			includeHiddenRoot: rootPath !== '/',
-			currentRoutePath: normalizedRoute
+	const filterPagesForRoot = (rootPath) => {
+		const normalizedRoot = normalizeRoutePath(rootPath || '/')
+		return pages.filter((page) => {
+			const resolvedRoot = resolveRootPath(page.routePath, pagesByRoute)
+			if (normalizedRoot === '/') {
+				return resolvedRoot === '/' || page.routePath === resolvedRoot
+			}
+			return resolvedRoot === normalizedRoot
 		})
-		pagesTreeCache.set(cacheKey, tree)
-		return tree
 	}
-	const getNavSequence = (routePath) => {
-		const rootPath = resolveRootPath(routePath, pagesByRoute)
-		const normalizedRoute = normalizeRoutePath(routePath || '/')
-		const cacheKey = `${rootPath}::${normalizedRoute}`
-		if (navSequenceCache.has(cacheKey)) {
-			return navSequenceCache.get(cacheKey)
+	const buildGlobalTree = () =>
+		buildPagesTree(filterPagesForRoot('/'), {
+			rootPath: '/',
+			includeHiddenRoot: false,
+			currentRoutePath: '/'
+		})
+	let pagesTreeGlobal = buildGlobalTree()
+	const treeByRoot = new Map()
+	const navSequenceByRoot = new Map()
+
+	const getFilteredTreeForRoot = (rootPath) => {
+		const normalizedRoot = normalizeRoutePath(rootPath || '/')
+		if (treeByRoot.has(normalizedRoot)) return treeByRoot.get(normalizedRoot)
+		if (normalizedRoot === '/') {
+			treeByRoot.set(normalizedRoot, pagesTreeGlobal)
+			return pagesTreeGlobal
 		}
-		const tree = getPagesTree(routePath)
+		const scoped = buildPagesTree(filterPagesForRoot(normalizedRoot), {
+			rootPath: normalizedRoot,
+			includeHiddenRoot: false,
+			currentRoutePath: normalizedRoot
+		})
+		treeByRoot.set(normalizedRoot, scoped)
+		return scoped
+	}
+
+	const getPagesTree = (routePath = '/') => {
+		const rootPath = resolveRootPath(routePath, pagesByRoute)
+		return getFilteredTreeForRoot(rootPath)
+	}
+
+	const getNavSequence = (routePath = '/') => {
+		const rootPath = resolveRootPath(routePath, pagesByRoute)
+		const normalizedRoot = normalizeRoutePath(rootPath || '/')
+		if (navSequenceByRoot.has(normalizedRoot)) {
+			return navSequenceByRoot.get(normalizedRoot)
+		}
+		const tree = getFilteredTreeForRoot(rootPath)
 		const sequence = buildNavSequence(tree, pagesByRoute)
-		navSequenceCache.set(cacheKey, sequence)
+		navSequenceByRoot.set(normalizedRoot, sequence)
 		return sequence
 	}
-	let pagesTree = getPagesTree('/')
 	const notFound = pagesByRoute.get('/404') || null
 	const languages = collectLanguagesFromPages(pageList)
 	const userSite = state.USER_SITE || {}
@@ -844,7 +805,7 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 		pages: pageList,
 		pagesByRoute,
 		getPageByRoute,
-		pagesTree,
+		pagesTree: pagesTreeGlobal,
 		getPagesTree,
 		derivedTitleCache: pageDerivedCache,
 		setDerivedTitle: (path, title, toc) => {
@@ -856,9 +817,10 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 			pageDerivedCache.delete(path)
 		},
 		refreshPagesTree: () => {
-			pagesTreeCache.clear()
-			navSequenceCache.clear()
-			pagesContext.pagesTree = getPagesTree('/')
+			pagesTreeGlobal = buildGlobalTree()
+			treeByRoot.clear()
+			navSequenceByRoot.clear()
+			pagesContext.pagesTree = pagesTreeGlobal
 		},
 		getSiblings: (routePath, path = null) => {
 			if (!routePath) return { prev: null, next: null }
@@ -872,6 +834,19 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 				index = sequence.findIndex((entry) => entry.routePath === routePath)
 			}
 			if (index < 0) return { prev: null, next: null }
+			const isVisible = (entry) => {
+				if (!entry) return false
+				if (entry.isRoot === true && entry.hidden !== false) return false
+				return !entry.hidden
+			}
+			let prevIndex = index - 1
+			while (prevIndex >= 0 && !isVisible(sequence[prevIndex])) {
+				prevIndex -= 1
+			}
+			let nextIndex = index + 1
+			while (nextIndex < sequence.length && !isVisible(sequence[nextIndex])) {
+				nextIndex += 1
+			}
 			const toNavEntry = (entry) => {
 				if (!entry) return null
 				return {
@@ -882,8 +857,8 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 				}
 			}
 			return {
-				prev: toNavEntry(sequence[index - 1] || null),
-				next: toNavEntry(sequence[index + 1] || null)
+				prev: toNavEntry(sequence[prevIndex] || null),
+				next: toNavEntry(sequence[nextIndex] || null)
 			}
 		},
 		refreshLanguages: () => {

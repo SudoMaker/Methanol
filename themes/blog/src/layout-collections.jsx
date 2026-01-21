@@ -39,9 +39,9 @@ const renderPostCards = (posts = [], collectionTitles = {}) =>
 		)
 	})
 
-export const LayoutCollections = ({ PageContent, title, pages, pagesByRoute, navLinks, components }) => {
+export const LayoutCollections = ({ PageContent, title, pages, pagesByRoute, navLinks, components, currentRoutePath, hiddenPrefixes }) => {
 	const { CollectionView } = components || {}
-	const filteredPosts = filterBlogPosts(pages, navLinks)
+	const filteredPosts = filterBlogPosts(pages, navLinks, { currentRoutePath, hiddenPrefixes })
 	const staticPosts = mapStaticPosts(filteredPosts)
 	const collectionTitles = collectCollectionTitles(staticPosts, pagesByRoute)
 	const visiblePosts = staticPosts.slice(0, 10)

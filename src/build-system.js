@@ -26,6 +26,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 import { state, cli } from './state.js'
 import { resolveUserViteConfig } from './config.js'
 import { buildPagesContext } from './pages.js'
+import { selectFeedPages } from './feed.js'
 import { buildComponentRegistry } from './components.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
 import { methanolVirtualHtmlPlugin, methanolResolverPlugin } from './vite-plugins.js'
@@ -99,6 +100,7 @@ export const buildHtmlEntries = async () => {
 	const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
 	const excludedDirs = Array.from(pagesContext.excludedDirs || [])
 	const rssContent = new Map()
+	const intermediateOutputs = []
 	try {
 		await runWorkerStage({
 			workers,
@@ -137,6 +139,10 @@ export const buildHtmlEntries = async () => {
 		})
 		stageLogger.end(compileToken)
 
+		const titleUpdates = updates
+			.filter((update) => update && update.title !== undefined)
+			.map((update) => ({ id: update.id, title: update.title }))
+
 		for (const update of updates) {
 			const page = pages[update.id]
 			if (!page) continue
@@ -150,7 +156,6 @@ export const buildHtmlEntries = async () => {
 		pagesContext.refreshPagesTree?.()
 		state.PAGES_CONTEXT = pagesContext
 
-		const titleSnapshot = pages.map((page) => page.title)
 		await runWorkerStage({
 			workers,
 			stage: 'sync',
@@ -159,14 +164,13 @@ export const buildHtmlEntries = async () => {
 				message: {
 					type: 'sync',
 					stage: 'sync',
-					updates,
-					titles: titleSnapshot
+					updates: titleUpdates
 				}
 			}))
 		})
 		const renderToken = stageLogger.start('Rendering pages')
 		completed = 0
-		const rendered = await runWorkerStage({
+		await runWorkerStage({
 			workers,
 			stage: 'render',
 			messages: workers.map((worker, index) => ({
@@ -182,54 +186,79 @@ export const buildHtmlEntries = async () => {
 				completed = count
 				stageLogger.update(renderToken, `Rendering pages [${completed}/${totalPages}]`)
 			},
-			collect: (message) => message.results || []
+			onResult: (result) => {
+				if (!result || typeof result.id !== 'number') return
+				const page = pages[result.id]
+				if (!page) return
+				const html = result.html
+				const name = resolveOutputName(page)
+				const id = normalizePath(resolve(state.VIRTUAL_HTML_OUTPUT_ROOT, `${name}.html`))
+				entry[name] = id
+				htmlCache.set(id, html)
+				if (state.INTERMEDIATE_DIR) {
+					intermediateOutputs.push({ name, id })
+				}
+			}
 		})
 		stageLogger.end(renderToken)
 
 		if (state.RSS_ENABLED) {
-			const rssToken = stageLogger.start('Rendering Feed')
-			completed = 0
-			const rssResults = await runWorkerStage({
-				workers,
-				stage: 'rss',
-				messages: workers.map((worker, index) => ({
-					worker,
-					message: {
-						type: 'rss',
-						stage: 'rss',
-						ids: assignments[index]
-					}
-				})),
-				onProgress: (count) => {
-					if (!logEnabled) return
-					completed = count
-					stageLogger.update(rssToken, `Rendering Feed [${completed}/${totalPages}]`)
-				},
-				collect: (message) => message.results || []
-			})
-			for (const item of rssResults || []) {
-				if (!item || typeof item.id !== 'number') continue
-				rssContent.set(item.id, item.content || '')
+			const feedPages = selectFeedPages(pages, state.RSS_OPTIONS || {})
+			const feedIds = []
+			const pageIndex = new Map(pages.map((page, index) => [page, index]))
+			for (const page of feedPages) {
+				const id = pageIndex.get(page)
+				if (id != null) {
+					feedIds.push(id)
+				}
 			}
-			stageLogger.end(rssToken)
-		}
-
-		for (const item of rendered) {
-			const page = pages[item.id]
-			if (!page) continue
-			const html = item.html
-			const name = resolveOutputName(page)
-			const id = normalizePath(resolve(state.VIRTUAL_HTML_OUTPUT_ROOT, `${name}.html`))
-			entry[name] = id
-			htmlCache.set(id, html)
-			if (state.INTERMEDIATE_DIR) {
-				const outPath = resolve(state.INTERMEDIATE_DIR, `${name}.html`)
-				await ensureDir(dirname(outPath))
-				await writeFile(outPath, html)
+			if (feedIds.length) {
+				const rssToken = stageLogger.start('Rendering feed')
+				completed = 0
+				const rssAssignments = Array.from({ length: workers.length }, () => [])
+				for (let i = 0; i < feedIds.length; i += 1) {
+					rssAssignments[i % workers.length].push(feedIds[i])
+				}
+				await runWorkerStage({
+					workers,
+					stage: 'rss',
+					messages: workers.map((worker, index) => ({
+						worker,
+						message: {
+							type: 'rss',
+							stage: 'rss',
+							ids: rssAssignments[index]
+						}
+					})),
+					onProgress: (count) => {
+						if (!logEnabled) return
+						completed = count
+						stageLogger.update(rssToken, `Rendering feed [${completed}/${feedIds.length}]`)
+					},
+					onResult: (result) => {
+						if (!result || typeof result.id !== 'number') return
+						const page = pages[result.id]
+						if (!page) return
+						const key = page.path || page.routePath
+						if (key) {
+							rssContent.set(key, result.content || '')
+						}
+					}
+				})
+				stageLogger.end(rssToken)
 			}
 		}
 	} finally {
 		await terminateWorkers(workers)
+	}
+	if (state.INTERMEDIATE_DIR) {
+		for (const output of intermediateOutputs) {
+			const html = htmlCache.get(output.id)
+			if (typeof html !== 'string') continue
+			const outPath = resolve(state.INTERMEDIATE_DIR, `${output.name}.html`)
+			await ensureDir(dirname(outPath))
+			await writeFile(outPath, html)
+		}
 	}
 
 	const htmlFiles = await collectHtmlFiles(state.PAGES_DIR)

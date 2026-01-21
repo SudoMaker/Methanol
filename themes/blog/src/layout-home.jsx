@@ -35,9 +35,9 @@ const renderPostCards = (posts = []) =>
 		)
 	})
 
-export const LayoutHome = ({ PageContent, pages, navLinks, components }) => {
+export const LayoutHome = ({ PageContent, pages, navLinks, components, currentRoutePath, hiddenPrefixes }) => {
 	const { PostList } = components || {}
-	const filteredPosts = filterBlogPosts(pages, navLinks)
+	const filteredPosts = filterBlogPosts(pages, navLinks, { currentRoutePath, hiddenPrefixes })
 	const staticPosts = mapStaticPosts(filteredPosts)
 	const visiblePosts = staticPosts.slice(0, 10)
 	const hasMore = staticPosts.length > visiblePosts.length
