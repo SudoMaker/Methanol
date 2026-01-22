@@ -461,6 +461,9 @@ export const applyConfig = async (config, mode) => {
 		state.RSS_ENABLED = cli.CLI_RSS
 	}
 	state.RSS_OPTIONS = resolveFeedOptions(config)
+	if (cli.CLI_RSS !== undefined && cli.CLI_ATOM === undefined) {
+		state.RSS_OPTIONS = { ...(state.RSS_OPTIONS || {}), atom: false }
+	}
 	if (cli.CLI_ATOM !== undefined) {
 		if (cli.CLI_ATOM === true) {
 			state.RSS_ENABLED = true

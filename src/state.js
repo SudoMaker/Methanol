@@ -169,19 +169,25 @@ const parser = yargs(hideBin(process.argv))
 	.wrap(null)
 
 const argv = parser.parseSync()
+const parsedCommand = argv._[0] ? String(argv._[0]) : null
+const isServeCommand = parsedCommand === 'serve' || parsedCommand === 'preview'
+const rawInput = argv.input || null
+const rawOutput = argv.output || null
+const normalizedInput = isServeCommand && rawInput && !rawOutput ? null : rawInput
+const normalizedOutput = isServeCommand && rawInput && !rawOutput ? rawInput : rawOutput
 
 export const cli = {
 	argv,
-	command: argv._[0] ? String(argv._[0]) : null,
+	command: parsedCommand,
 	showHelp: () => parser.showHelp(),
 	CLI_INTERMEDIATE_DIR: argv['intermediate-dir'] || null,
 	CLI_EMIT_INTERMEDIATE: Boolean(argv['emit-intermediate']),
 	CLI_HOST: argv.host ?? null,
 	CLI_PORT: typeof argv.port === 'number' ? argv.port : null,
-	CLI_PAGES_DIR: argv.input || null,
+	CLI_PAGES_DIR: normalizedInput,
 	CLI_COMPONENTS_DIR: argv.components || null,
 	CLI_ASSETS_DIR: argv.assets || null,
-	CLI_OUTPUT_DIR: argv.output || null,
+	CLI_OUTPUT_DIR: normalizedOutput,
 	CLI_CONFIG_PATH: argv.config || null,
 	CLI_SITE_NAME: argv['site-name'] || null,
 	CLI_OWNER: argv.owner || null,
