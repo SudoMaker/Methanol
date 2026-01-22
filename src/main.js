@@ -20,7 +20,7 @@
 
 import { loadUserConfig, applyConfig } from './config.js'
 import { runViteDev } from './dev-server.js'
-import { buildHtmlEntries, runViteBuild, rewriteHtmlEntriesInWorkers, scanHtmlEntries } from './build-system.js'
+import { buildHtmlEntries, runViteBuild, scanHtmlEntries } from './build-system.js'
 import { buildPrecacheManifest, patchServiceWorker, writeWebManifest } from './pwa.js'
 import { terminateWorkers } from './workers/build-pool.js'
 import { runPagefind } from './pagefind.js'
@@ -140,19 +140,18 @@ const main = async () => {
 			: null
 		await runHooks(state.USER_PRE_BUNDLE_HOOKS, buildContext)
 		await runHooks(state.THEME_PRE_BUNDLE_HOOKS, buildContext)
-		const manifest = await runViteBuild({ ...scanResult, htmlEntries })
-		const rewriteToken = stageLogger.start('Rewriting HTML')
+		let manifest = null
 		try {
-			await rewriteHtmlEntriesInWorkers({
-				pages: pagesContext?.pagesAll || pagesContext?.pages || [],
-				htmlStageDir,
-				manifest,
-				scanResult,
-				renderScansById,
-				workers,
-				assignments,
-				onProgress: (done, total) => {
-					stageLogger.update(rewriteToken, `Rewriting HTML [${done}/${total}]`)
+			manifest = await runViteBuild({
+				...scanResult,
+				htmlEntries,
+				rewrite: {
+					pages: pagesContext?.pagesAll || pagesContext?.pages || [],
+					htmlStageDir,
+					scanResult,
+					renderScansById,
+					workers,
+					assignments
 				}
 			})
 		} finally {
@@ -160,7 +159,6 @@ const main = async () => {
 				await terminateWorkers(workers)
 			}
 		}
-		stageLogger.end(rewriteToken)
 		await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
 		await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
 		if (state.PAGEFIND_ENABLED) {
