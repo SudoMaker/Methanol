@@ -169,8 +169,9 @@ const handleCompile = async (message) => {
 }
 
 const handleRender = async (message) => {
-	const { ids = [], stage } = message || {}
-	const { renderHtml } = await import('../mdx.js')
+	const { ids = [], stage, feedIds = [] } = message || {}
+	const { renderHtml, renderPageContent } = await import('../mdx.js')
+	const feedSet = new Set(Array.isArray(feedIds) ? feedIds : [])
 	let completed = 0
 	for (const id of ids) {
 		const page = pages[id]
@@ -187,38 +188,19 @@ const handleRender = async (message) => {
 				pagesContext,
 				pageMeta: page
 			})
-			parentPort?.postMessage({ type: 'result', stage, result: { id, html } })
+			let feedContent = null
+			if (feedSet.has(id)) {
+				feedContent = await renderPageContent({
+					routePath: page.routePath,
+					path: page.path,
+					components,
+					pagesContext,
+					pageMeta: page
+				})
+			}
+			parentPort?.postMessage({ type: 'result', stage, result: { id, html, feedContent } })
 		} catch (error) {
 			logPageError('MDX render', page, error)
-			throw error
-		}
-		completed += 1
-		parentPort?.postMessage({ type: 'progress', stage, completed })
-	}
-}
-
-const handleRss = async (message) => {
-	const { ids = [], stage } = message || {}
-	const { renderPageContent } = await import('../mdx.js')
-	let completed = 0
-	for (const id of ids) {
-		const page = pages[id]
-		if (!page) {
-			completed += 1
-			parentPort?.postMessage({ type: 'progress', stage, completed })
-			continue
-		}
-		try {
-			const content = await renderPageContent({
-				routePath: page.routePath,
-				path: page.path,
-				components,
-				pagesContext,
-				pageMeta: page
-			})
-			parentPort?.postMessage({ type: 'result', stage, result: { id, content } })
-		} catch (error) {
-			logPageError('RSS render', page, error)
 			throw error
 		}
 		completed += 1
@@ -247,11 +229,6 @@ parentPort?.on('message', async (message) => {
 		}
 		if (type === 'render') {
 			await handleRender(message)
-			parentPort?.postMessage({ type: 'done', stage })
-			return
-		}
-		if (type === 'rss') {
-			await handleRss(message)
 			parentPort?.postMessage({ type: 'done', stage })
 			return
 		}

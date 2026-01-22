@@ -101,6 +101,8 @@ export const buildHtmlEntries = async () => {
 	const excludedDirs = Array.from(pagesContext.excludedDirs || [])
 	const rssContent = new Map()
 	const intermediateOutputs = []
+	let feedIds = []
+	let feedAssignments = null
 	try {
 		await runWorkerStage({
 			workers,
@@ -168,6 +170,18 @@ export const buildHtmlEntries = async () => {
 				}
 			}))
 		})
+		if (state.RSS_ENABLED) {
+			const feedPages = selectFeedPages(pages, state.RSS_OPTIONS || {})
+			const pageIndex = new Map(pages.map((page, index) => [page, index]))
+			feedIds = feedPages.map((page) => pageIndex.get(page)).filter((id) => id != null)
+			if (feedIds.length) {
+				feedAssignments = Array.from({ length: workers.length }, () => [])
+				for (const id of feedIds) {
+					feedAssignments[id % workers.length].push(id)
+				}
+			}
+		}
+
 		const renderToken = stageLogger.start('Rendering pages')
 		completed = 0
 		await runWorkerStage({
@@ -178,7 +192,8 @@ export const buildHtmlEntries = async () => {
 				message: {
 					type: 'render',
 					stage: 'render',
-					ids: assignments[index]
+					ids: assignments[index],
+					feedIds: feedAssignments ? feedAssignments[index] : []
 				}
 			})),
 			onProgress: (count) => {
@@ -198,56 +213,15 @@ export const buildHtmlEntries = async () => {
 				if (state.INTERMEDIATE_DIR) {
 					intermediateOutputs.push({ name, id })
 				}
+				if (result.feedContent != null) {
+					const key = page.path || page.routePath
+					if (key) {
+						rssContent.set(key, result.feedContent || '')
+					}
+				}
 			}
 		})
 		stageLogger.end(renderToken)
-
-		if (state.RSS_ENABLED) {
-			const feedPages = selectFeedPages(pages, state.RSS_OPTIONS || {})
-			const feedIds = []
-			const pageIndex = new Map(pages.map((page, index) => [page, index]))
-			for (const page of feedPages) {
-				const id = pageIndex.get(page)
-				if (id != null) {
-					feedIds.push(id)
-				}
-			}
-			if (feedIds.length) {
-				const rssToken = stageLogger.start('Rendering feed')
-				completed = 0
-				const rssAssignments = Array.from({ length: workers.length }, () => [])
-				for (let i = 0; i < feedIds.length; i += 1) {
-					rssAssignments[i % workers.length].push(feedIds[i])
-				}
-				await runWorkerStage({
-					workers,
-					stage: 'rss',
-					messages: workers.map((worker, index) => ({
-						worker,
-						message: {
-							type: 'rss',
-							stage: 'rss',
-							ids: rssAssignments[index]
-						}
-					})),
-					onProgress: (count) => {
-						if (!logEnabled) return
-						completed = count
-						stageLogger.update(rssToken, `Rendering feed [${completed}/${feedIds.length}]`)
-					},
-					onResult: (result) => {
-						if (!result || typeof result.id !== 'number') return
-						const page = pages[result.id]
-						if (!page) return
-						const key = page.path || page.routePath
-						if (key) {
-							rssContent.set(key, result.content || '')
-						}
-					}
-				})
-				stageLogger.end(rssToken)
-			}
-		}
 	} finally {
 		await terminateWorkers(workers)
 	}

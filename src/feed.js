@@ -63,15 +63,6 @@ const wrapCdata = (value) => {
 	return `<![CDATA[${text.replace(/]]>/g, ']]]]><![CDATA[>')}]]>`
 }
 
-const escapeXml = (value) => {
-	const text = value == null ? '' : String(value)
-	if (!text) return ''
-	return text
-		.replace(/&/g, '&amp;')
-		.replace(/</g, '&lt;')
-		.replace(/>/g, '&gt;')
-}
-
 const resolveSiteUrl = (options, site) => {
 	if (options?.siteUrl) return options.siteUrl
 	if (state.SITE_BASE) return state.SITE_BASE
@@ -86,10 +77,10 @@ const buildItem = (page, siteUrl, htmlContent = null, isAtom = false, siteOwner 
 	const link = new URL(href, siteUrl).href
 	const title = page.title || page.name || page.routePath || link
 	const description = extractExcerpt(page)
-	const contentSource = htmlContent || page.content || ''
+	const contentSource = htmlContent ?? page.content ?? ''
 	const content = contentSource
 		? (isAtom
-			? HTMLRenderer.rawHTML(escapeXml(contentSource))
+			? contentSource
 			: HTMLRenderer.rawHTML(wrapCdata(contentSource)))
 		: null
 	const authorValue = page.frontmatter?.author
@@ -183,7 +174,7 @@ export const generateRssFeed = async (pagesContext, rssContent = null) => {
 	const items = pages
 		.map((page) => ({
 			page,
-			content: rssContent?.get(page.path) || rssContent?.get(page.routePath) || null
+			content: rssContent?.get(page.path) ?? rssContent?.get(page.routePath) ?? null
 		}))
 		.map((entry) => buildItem(entry.page, siteUrl, entry.content, isAtom, siteOwner))
 		.filter(Boolean)
