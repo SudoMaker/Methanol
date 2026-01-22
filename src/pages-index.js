@@ -21,7 +21,16 @@
 import JSON5 from 'json5'
 import { extractExcerpt } from './text-utils.js'
 
-const OMIT_KEYS = new Set(['content', 'mdxComponent', 'mdxCtx', 'getSiblings'])
+const OMIT_KEYS = new Set([
+	'content',
+	'mdxComponent',
+	'mdxCtx',
+	'getSiblings',
+	'matter',
+	'path',
+	'exclude',
+	'segments'
+])
 
 const sanitizePage = (page) => {
 	const result = {}

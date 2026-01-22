@@ -636,7 +636,8 @@ export const renderPageContent = async ({ routePath, path, components, pagesCont
 		routePath,
 		path,
 		pageMeta,
-		pagesContext
+		pagesContext,
+		lazyPagesTree: true
 	})
 
 	await compilePageMdx(pageMeta, pagesContext, { ctx })

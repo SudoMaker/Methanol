@@ -118,11 +118,12 @@ const NavTree = ({ nodes, depth }) => {
 	)
 }
 
-const rootNodes = signal()
+const _rootNodes = signal()
+const rootNodes = signal(_rootNodes, (nodes) => nodes?.map(toSignal))
 const rootTree = HTMLRenderer.createElement(NavTree, { nodes: rootNodes, depth: 0 })
 
 export const renderNavTree = (nodes, path) => {
 	currentPath.value = path
-	rootNodes.value = nodes.map(toSignal)
+	_rootNodes.value = nodes
 	return rootTree
 }
