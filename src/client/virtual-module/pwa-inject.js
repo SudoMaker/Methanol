@@ -18,8 +18,30 @@
  * under the License.
  */
 
+const resolveBasePrefix = () => {
+	let base = import.meta.env?.BASE_URL || '/'
+	if (!base || base === '/' || base === './') return ''
+	if (base.startsWith('http://') || base.startsWith('https://')) {
+		try {
+			base = new URL(base).pathname
+		} catch {
+			return ''
+		}
+	}
+	if (!base.startsWith('/')) return ''
+	if (base.endsWith('/')) base = base.slice(0, -1)
+	return base
+}
+
 if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
-	navigator.serviceWorker.ready.then((reg) => {
-		reg.active?.postMessage({ type: 'METHANOL_WARM_MANIFEST' });
-	});
+	const base = resolveBasePrefix()
+	const scope = base ? `${base}/` : '/'
+	const swUrl = `${scope}sw.js`
+	navigator.serviceWorker
+		.register(swUrl)
+		.then(() => navigator.serviceWorker.ready)
+		.then((reg) => {
+			reg.active?.postMessage({ type: 'METHANOL_WARM_MANIFEST' })
+		})
+		.catch(() => {})
 }

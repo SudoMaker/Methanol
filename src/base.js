@@ -18,13 +18,19 @@
  * under the License.
  */
 
-import { createDOMRenderer } from 'refui/dom'
-import { defaults } from 'refui/browser'
-import { lazy } from 'refui'
-import { init } from './loader.js'
-import { registry } from 'methanol:registry'
-import './pwa-inject.js'
-
-const R = createDOMRenderer(defaults)
-
-init(registry, R)
+export const normalizeBasePrefix = (value) => {
+	if (!value || value === '/' || value === './') return ''
+	if (typeof value !== 'string') return ''
+	let base = value.trim()
+	if (!base || base === '/' || base === './') return ''
+	if (base.startsWith('http://') || base.startsWith('https://')) {
+		try {
+			base = new URL(base).pathname
+		} catch {
+			return ''
+		}
+	}
+	if (!base.startsWith('/')) return ''
+	if (base.endsWith('/')) base = base.slice(0, -1)
+	return base
+}

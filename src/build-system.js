@@ -18,20 +18,22 @@
  * under the License.
  */
 
+import { existsSync } from 'fs'
 import { writeFile, mkdir, rm, readFile, readdir, stat } from 'fs/promises'
-import { resolve, dirname, join } from 'path'
+import { resolve, dirname, join, basename } from 'path'
+import { createHash } from 'crypto'
 import { fileURLToPath } from 'url'
 import { build as viteBuild, mergeConfig, normalizePath } from 'vite'
-import { VitePWA } from 'vite-plugin-pwa'
 import { state, cli } from './state.js'
 import { resolveUserViteConfig } from './config.js'
 import { buildPagesContext } from './pages.js'
 import { selectFeedPages } from './feed.js'
 import { buildComponentRegistry } from './components.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
-import { methanolVirtualHtmlPlugin, methanolResolverPlugin } from './vite-plugins.js'
+import { methanolResolverPlugin } from './vite-plugins.js'
 import { createStageLogger } from './stage-logger.js'
 import { preparePublicAssets } from './public-assets.js'
+export { scanHtmlEntries, rewriteHtmlEntries } from './html/build-html.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -40,11 +42,28 @@ const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
 }
 
+const ensureSwEntry = async () => {
+	const entriesDir = resolve(resolveMethanolDir(), ENTRY_DIR)
+	await ensureDir(entriesDir)
+	const swEntryPath = resolve(entriesDir, 'sw-entry.js')
+	const swSource = normalizePath(resolve(__dirname, 'client', 'sw.js'))
+	await writeFile(swEntryPath, `import ${JSON.stringify(swSource)}\n`)
+	return swEntryPath
+}
+
+const INLINE_DIR = 'inline'
+const ENTRY_DIR = 'entries'
+
+const resolveMethanolDir = () => resolve(state.PAGES_DIR, '.methanol')
+
 const isHtmlFile = (name) => name.endsWith('.html')
 const collectHtmlFiles = async (dir, basePath = '') => {
 	const entries = await readdir(dir)
 	const files = []
 	for (const entry of entries.sort()) {
+		if (entry.startsWith('.') || entry.startsWith('_')) {
+			continue
+		}
 		const fullPath = resolve(dir, entry)
 		const stats = await stat(fullPath)
 		if (stats.isDirectory()) {
@@ -65,11 +84,18 @@ const collectHtmlFiles = async (dir, basePath = '') => {
 	return files
 }
 
-export const buildHtmlEntries = async () => {
+const hashKey = (value) =>
+	createHash('md5').update(value).digest('hex')
+
+const makeInputKey = (prefix, value) => `${prefix}-${hashKey(value).slice(0, 12)}`
+
+export const buildHtmlEntries = async (options = {}) => {
+	const keepWorkers = Boolean(options.keepWorkers)
 	await resolveUserViteConfig('build') // Prepare `base`
-	if (state.INTERMEDIATE_DIR) {
-		await rm(state.INTERMEDIATE_DIR, { recursive: true, force: true })
-		await ensureDir(state.INTERMEDIATE_DIR)
+	const htmlStageDir = state.INTERMEDIATE_DIR
+	if (htmlStageDir) {
+		await rm(htmlStageDir, { recursive: true, force: true })
+		await ensureDir(htmlStageDir)
 	}
 
 	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
@@ -84,8 +110,14 @@ export const buildHtmlEntries = async () => {
 	}
 	await buildComponentRegistry()
 	const pagesContext = await buildPagesContext({ compileAll: false })
-	const entry = {}
-	const htmlCache = new Map()
+	const htmlEntries = []
+	const htmlEntryNames = new Set()
+	const htmlWrites = []
+	const inlineDir = resolve(resolveMethanolDir(), INLINE_DIR)
+	await rm(inlineDir, { recursive: true, force: true })
+	await ensureDir(inlineDir)
+	const renderScans = new Map()
+	const renderScansById = new Map()
 	const resolveOutputName = (page) => {
 		if (page.routePath === '/') return 'index'
 		if (page.isIndex && page.dir) {
@@ -94,15 +126,15 @@ export const buildHtmlEntries = async () => {
 		return page.routePath.slice(1)
 	}
 
-	const pages = pagesContext.pages || []
+	const pages = pagesContext.pagesAll || pagesContext.pages || []
 	const totalPages = pages.length
 	const { workers, assignments } = createBuildWorkers(totalPages)
 	const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
 	const excludedDirs = Array.from(pagesContext.excludedDirs || [])
 	const rssContent = new Map()
-	const intermediateOutputs = []
 	let feedIds = []
 	let feedAssignments = null
+	let completedRun = false
 	try {
 		await runWorkerStage({
 			workers,
@@ -193,7 +225,8 @@ export const buildHtmlEntries = async () => {
 					type: 'render',
 					stage: 'render',
 					ids: assignments[index],
-					feedIds: feedAssignments ? feedAssignments[index] : []
+					feedIds: feedAssignments ? feedAssignments[index] : [],
+					cacheHtml: !htmlStageDir
 				}
 			})),
 			onProgress: (count) => {
@@ -207,11 +240,16 @@ export const buildHtmlEntries = async () => {
 				if (!page) return
 				const html = result.html
 				const name = resolveOutputName(page)
-				const id = normalizePath(resolve(state.VIRTUAL_HTML_OUTPUT_ROOT, `${name}.html`))
-				entry[name] = id
-				htmlCache.set(id, html)
-				if (state.INTERMEDIATE_DIR) {
-					intermediateOutputs.push({ name, id })
+				const outPath = htmlStageDir ? resolve(htmlStageDir, `${name}.html`) : `${name}.html`
+				htmlEntryNames.add(name)
+				htmlEntries.push({ name, routePath: page.routePath, stagePath: outPath, source: 'rendered' })
+				if (htmlStageDir) {
+					htmlWrites.push(
+						(async () => {
+							await ensureDir(dirname(outPath))
+							await writeFile(outPath, html)
+						})()
+					)
 				}
 				if (result.feedContent != null) {
 					const key = page.path || page.routePath
@@ -222,16 +260,44 @@ export const buildHtmlEntries = async () => {
 			}
 		})
 		stageLogger.end(renderToken)
+
+		if (htmlWrites.length) {
+			await Promise.all(htmlWrites)
+		}
+
+		const scanToken = stageLogger.start('Scanning HTML')
+		completed = 0
+		await runWorkerStage({
+			workers,
+			stage: 'scan',
+			messages: workers.map((worker, index) => ({
+				worker,
+				message: {
+					type: 'scan',
+					stage: 'scan',
+					ids: assignments[index],
+					htmlStageDir
+				}
+			})),
+			onProgress: (count) => {
+				if (!logEnabled) return
+				completed = count
+				stageLogger.update(scanToken, `Scanning HTML [${completed}/${totalPages}]`)
+			},
+			onResult: (result) => {
+				if (result?.stagePath && result?.scan) {
+					renderScans.set(result.stagePath, result.scan)
+				}
+				if (typeof result?.id === 'number' && result?.scan) {
+					renderScansById.set(result.id, result.scan)
+				}
+			}
+		})
+		stageLogger.end(scanToken)
+		completedRun = true
 	} finally {
-		await terminateWorkers(workers)
-	}
-	if (state.INTERMEDIATE_DIR) {
-		for (const output of intermediateOutputs) {
-			const html = htmlCache.get(output.id)
-			if (typeof html !== 'string') continue
-			const outPath = resolve(state.INTERMEDIATE_DIR, `${output.name}.html`)
-			await ensureDir(dirname(outPath))
-			await writeFile(outPath, html)
+		if (!keepWorkers || !completedRun) {
+			await terminateWorkers(workers)
 		}
 	}
 
@@ -255,24 +321,120 @@ export const buildHtmlEntries = async () => {
 		}
 		const name = file.relativePath.replace(/\.html$/, '')
 		const outputName = name === 'index' ? 'index' : name
-		if (entry[outputName]) {
+		if (htmlEntryNames.has(outputName)) {
 			continue
 		}
 		const html = await readFile(file.fullPath, 'utf-8')
-		const id = normalizePath(resolve(state.VIRTUAL_HTML_OUTPUT_ROOT, `${outputName}.html`))
-		entry[outputName] = id
-		htmlCache.set(id, html)
-		if (state.INTERMEDIATE_DIR) {
-			const outPath = resolve(state.INTERMEDIATE_DIR, file.relativePath)
+		const outPath = htmlStageDir ? resolve(htmlStageDir, file.relativePath) : null
+		if (outPath) {
 			await ensureDir(dirname(outPath))
 			await writeFile(outPath, html)
 		}
+		htmlEntryNames.add(outputName)
+		htmlEntries.push({
+			name: outputName,
+			routePath: outputName === 'index'
+				? '/'
+				: outputName.endsWith('/index')
+					? `/${outputName.slice(0, -'/index'.length)}/`
+					: `/${outputName}`,
+			stagePath: outPath,
+			inputPath: file.fullPath,
+			source: 'static'
+		})
 	}
 
-	return { entry, htmlCache, pagesContext, rssContent }
+	return {
+		htmlEntries,
+		htmlStageDir,
+		pagesContext,
+		rssContent,
+		renderScans,
+		renderScansById,
+		workers: keepWorkers ? workers : null,
+		assignments: keepWorkers ? assignments : null
+	}
 }
 
-export const runViteBuild = async (entry, htmlCache) => {
+export const rewriteHtmlEntriesInWorkers = async ({
+	pages = [],
+	htmlStageDir,
+	manifest,
+	scanResult,
+	renderScansById,
+	onProgress,
+	workers: existingWorkers = null,
+	assignments: existingAssignments = null
+}) => {
+	const totalPages = pages.length
+	if (!totalPages) return
+	const useExisting = Array.isArray(existingWorkers) && Array.isArray(existingAssignments)
+	const { workers, assignments } = useExisting
+		? { workers: existingWorkers, assignments: existingAssignments }
+		: createBuildWorkers(totalPages)
+	try {
+		if (!useExisting) {
+			await runWorkerStage({
+				workers,
+				stage: 'setPagesLite',
+				messages: workers.map((worker) => ({
+					worker,
+					message: {
+						type: 'setPagesLite',
+						stage: 'setPagesLite',
+						pages
+					}
+				}))
+			})
+		}
+
+		const entryModules = Array.isArray(scanResult?.entryModules) ? scanResult.entryModules : []
+		const commonScripts = Array.isArray(scanResult?.commonScripts) ? scanResult.commonScripts : []
+		const commonEntry = scanResult?.commonScriptEntry?.manifestKey
+			? manifest?.[scanResult.commonScriptEntry.manifestKey] || manifest?.[`/${scanResult.commonScriptEntry.manifestKey}`]
+			: null
+
+		await runWorkerStage({
+			workers,
+			stage: 'rewrite',
+			messages: workers.map((worker, index) => {
+				const ids = assignments[index] || []
+				const scans = {}
+				if (renderScansById) {
+					for (const id of ids) {
+						const scan = renderScansById.get(id)
+						if (scan) scans[id] = scan
+					}
+				}
+				return {
+					worker,
+					message: {
+						type: 'rewrite',
+						stage: 'rewrite',
+						ids,
+						htmlStageDir,
+						manifest,
+						entryModules,
+						commonScripts,
+						commonEntry,
+						scans
+					}
+				}
+			}),
+			onProgress: (count) => {
+				if (typeof onProgress === 'function') {
+					onProgress(count, totalPages)
+				}
+			}
+		})
+	} finally {
+		if (!useExisting) {
+			await terminateWorkers(workers)
+		}
+	}
+}
+
+export const runViteBuild = async (inputs) => {
 	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
 	const stageLogger = createStageLogger(logEnabled)
 	const token = stageLogger.start('Building bundle')
@@ -285,20 +447,53 @@ export const runViteBuild = async (entry, htmlCache) => {
 		})
 	}
 	const copyPublicDirEnabled = state.STATIC_DIR !== false
-	const manifestConfig = state.PWA_OPTIONS?.manifest || {}
-	const resolvedManifest = { name: state.SITE_NAME, short_name: state.SITE_NAME, ...manifestConfig }
+	const entryModules = Array.isArray(inputs?.entryModules) ? inputs.entryModules : []
+	const entryInputs = entryModules
+		.filter((entry) => entry && entry.kind !== 'style')
+		.map((entry) => entry.fsPath)
+		.filter(Boolean)
+		.sort()
+	const htmlEntries = Array.isArray(inputs?.htmlEntries) ? inputs.htmlEntries : []
+	const htmlInputs = htmlEntries
+		.filter((entry) => entry?.source === 'static' && entry.inputPath)
+		.map((entry) => entry.inputPath)
+		.sort()
+	if (cli.CLI_VERBOSE && entryInputs.length === 0) {
+		console.log('Vite pipeline: no wrapper entries detected (no module scripts/stylesheets found)')
+	}
+	const rollupInput = {}
+	for (const entryPath of entryInputs) {
+		const normalized = normalizePath(entryPath)
+		rollupInput[makeInputKey('chunk', normalized)] = normalized
+	}
+	for (const htmlPath of htmlInputs) {
+		const normalized = normalizePath(htmlPath)
+		rollupInput[makeInputKey('html', normalized)] = normalized
+	}
+	let swEntryPath = null
+	if (state.PWA_ENABLED) {
+		swEntryPath = await ensureSwEntry()
+		if (swEntryPath) {
+			const normalized = normalizePath(swEntryPath)
+			rollupInput['sw'] = normalized
+		}
+	}
 	const baseConfig = {
 		configFile: false,
 		root: state.PAGES_DIR,
-		appType: 'mpa',
+		appType: 'custom',
 		publicDir: state.STATIC_DIR === false ? false : state.STATIC_DIR,
 		logLevel: cli.CLI_VERBOSE ? 'info' : 'silent',
 		build: {
 			outDir: state.DIST_DIR,
 			emptyOutDir: true,
 			rollupOptions: {
-				input: entry
+				input: rollupInput,
+				output: {
+					entryFileNames: (chunk) => (chunk.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js')
+				}
 			},
+			manifest: true,
 			copyPublicDir: copyPublicDirEnabled,
 			minify: true
 		},
@@ -309,27 +504,34 @@ export const runViteBuild = async (entry, htmlCache) => {
 		resolve: {
 			dedupe: ['refui', 'methanol']
 		},
-		plugins: [
-			methanolVirtualHtmlPlugin(htmlCache),
-			methanolResolverPlugin(),
-			state.PWA_ENABLED
-				? VitePWA({
-						injectRegister: 'auto',
-						registerType: 'autoUpdate',
-						strategies: 'injectManifest',
-						srcDir: resolve(__dirname, 'client'),
-						filename: 'sw.js',
-						manifest: resolvedManifest,
-						injectManifest: {
-							globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
-							...(state.PWA_OPTIONS?.injectManifest || {})
-						}
-					})
-				: null
-		]
+		plugins: [methanolResolverPlugin()]
 	}
 	const userConfig = await resolveUserViteConfig('build')
 	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
+
+	// Keep the pipeline deterministic: do not let user configs override the build root/output/inputs.
+	finalConfig.root = state.PAGES_DIR
+	finalConfig.appType = 'custom'
+	finalConfig.publicDir = state.STATIC_DIR === false ? false : state.STATIC_DIR
+	finalConfig.build = {
+		...(finalConfig.build || {}),
+		outDir: state.DIST_DIR,
+		emptyOutDir: true,
+		manifest: true,
+		copyPublicDir: copyPublicDirEnabled,
+		rollupOptions: {
+			...((finalConfig.build && finalConfig.build.rollupOptions) || {}),
+			input: rollupInput,
+			output: (() => {
+				const existing = finalConfig.build?.rollupOptions?.output
+				const outputConfig = Array.isArray(existing) ? existing[0] || {} : existing || {}
+				return {
+					...outputConfig,
+					entryFileNames: (chunk) => (chunk.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js')
+				}
+			})()
+		}
+	}
 
 	const originalLog = console.log
 	const originalWarn = console.warn
@@ -347,4 +549,27 @@ export const runViteBuild = async (entry, htmlCache) => {
 		}
 	}
 	stageLogger.end(token)
+	const manifestFileName = typeof finalConfig.build?.manifest === 'string'
+		? finalConfig.build.manifest
+		: '.vite/manifest.json'
+	const manifestPath = resolve(state.DIST_DIR, manifestFileName.replace(/^\//, ''))
+	const methanolManifestDir = resolve(state.PAGES_DIR, '.methanol')
+	const methanolManifestPath = resolve(methanolManifestDir, 'manifest.json')
+	try {
+		const raw = await readFile(manifestPath, 'utf-8')
+		const parsed = JSON.parse(raw)
+		await ensureDir(methanolManifestDir)
+		await writeFile(methanolManifestPath, raw)
+		await rm(manifestPath, { force: true })
+		const manifestDir = dirname(manifestPath)
+		if (basename(manifestDir) === '.vite') {
+			await rm(manifestDir, { recursive: true, force: true })
+		}
+		return parsed
+	} catch (error) {
+		if (cli.CLI_VERBOSE) {
+			console.log(`Vite pipeline: failed to read manifest at ${manifestPath}`)
+		}
+		return {}
+	}
 }

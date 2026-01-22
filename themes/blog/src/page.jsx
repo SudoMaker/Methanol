@@ -128,7 +128,6 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 	const pagefindOptions = ctx.site.pagefind?.options || null
 	const feedInfo = ctx.site.feed
 	const rssHref = feedInfo?.enabled ? feedInfo.href : null
-	const feedType = feedInfo?.atom ? 'application/atom+xml' : 'application/rss+xml'
 	const feedLabel = feedInfo?.atom ? 'Atom' : 'RSS'
 
 	return (
@@ -142,7 +141,6 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx, withBase }) =>
 						{title} | {siteName}
 					</title>
 					<link rel="stylesheet" href="/.methanol_theme_blog/style.css" />
-					{rssHref ? <link rel="alternate" type={feedType} title={`${siteName} ${feedLabel}`} href={rssHref} /> : null}
 					<ExtraHead />
 				</head>
 				<body>

@@ -18,7 +18,6 @@
  * under the License.
  */
 
-import '../register-loader.js'
 import { parentPort, workerData } from 'worker_threads'
 
 const { mode = 'production', configPath = null, cli: cliOverrides = null } = workerData || {}

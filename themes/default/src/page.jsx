@@ -63,7 +63,6 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 	const pagefindOptions = ctx.site.pagefind?.options || null
 	const feedInfo = ctx.site.feed
 	const rssHref = feedInfo?.enabled ? feedInfo.href : null
-	const feedType = feedInfo?.atom ? 'application/atom+xml' : 'application/rss+xml'
 	const feedLabel = feedInfo?.atom ? 'Atom' : 'RSS'
 	const repoBase = ctx.site.repoBase
 	const sourceUrl = pageFrontmatter.sourceURL
@@ -128,7 +127,6 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 					{twitterTitle ? <meta name="twitter:title" content={twitterTitle} /> : null}
 					{twitterDescription ? <meta name="twitter:description" content={twitterDescription} /> : null}
 					{twitterImage ? <meta name="twitter:image" content={twitterImage} /> : null}
-					{rssHref ? <link rel="alternate" type={feedType} title={`${siteName} ${feedLabel}`} href={rssHref} /> : null}
 					<link
 						rel="preload stylesheet"
 						as="style"

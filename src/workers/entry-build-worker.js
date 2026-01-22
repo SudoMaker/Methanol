@@ -18,13 +18,5 @@
  * under the License.
  */
 
-import { createDOMRenderer } from 'refui/dom'
-import { defaults } from 'refui/browser'
-import { lazy } from 'refui'
-import { init } from './loader.js'
-import { registry } from 'methanol:registry'
-import './pwa-inject.js'
-
-const R = createDOMRenderer(defaults)
-
-init(registry, R)
+import '../register-loader.js'
+import('./build-worker.js')

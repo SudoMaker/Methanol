@@ -20,5 +20,4 @@
  * under the License.
  */
 
-import '../src/register-loader.js'
-import('../src/main.js')
+import('../src/entry.js')

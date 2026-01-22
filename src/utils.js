@@ -22,7 +22,7 @@ import NullProtoObj from 'null-prototype-object'
 
 export const cached = (fn) => {
 	let cache = null
-	return () => (cache ?? (cache = fn()))
+	return (...args) => (cache ?? (cache = fn(...args)))
 }
 
 export const cachedStr = (fn) => {

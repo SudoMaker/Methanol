@@ -49,6 +49,7 @@ const RWND_FALLBACK = HTMLRenderer.rawHTML(
 )
 
 let cachedHeadAssets = null
+let cachedSiteHeadAssets = null
 
 const resolveUserHeadAssets = () => {
 	if (cachedHeadAssets) {
@@ -121,6 +122,36 @@ const resolvePageHeadAssets = (page) => {
 		if (src) {
 			assets.push(HTMLRenderer.c('script', { type: 'module', src }))
 		}
+	}
+	return assets
+}
+
+const resolveSiteHeadAssets = (ctx) => {
+	if (cachedSiteHeadAssets) {
+		return cachedSiteHeadAssets
+	}
+	const assets = []
+	const site = ctx?.site || {}
+	const feed = site.feed
+	if (feed?.enabled && feed.href) {
+		const label = feed.atom ? 'Atom' : 'RSS'
+		const name = typeof site.name === 'string' && site.name.trim() ? site.name : 'Site'
+		const type = feed.atom ? 'application/atom+xml' : 'application/rss+xml'
+		assets.push(
+			HTMLRenderer.c('link', {
+				rel: 'alternate',
+				type,
+				title: `${name} ${label}`,
+				href: feed.href
+			})
+		)
+	}
+	const pwa = site.pwa
+	if (pwa?.enabled && pwa.manifestHref) {
+		assets.push(HTMLRenderer.c('link', { rel: 'manifest', href: pwa.manifestHref }))
+	}
+	if (state.CURRENT_MODE === 'production') {
+		cachedSiteHeadAssets = assets
 	}
 	return assets
 }
@@ -583,6 +614,7 @@ export const renderHtml = async ({ routePath, path, components, pagesContext, pa
 			resolveRewindInject(),
 			...resolveUserHeadAssets(),
 			...resolvePageHeadAssets(pageMeta),
+			...resolveSiteHeadAssets(ctx),
 			Outlet(),
 			RWND_FALLBACK
 		]
@@ -647,7 +679,7 @@ export const renderPageContent = async ({ routePath, path, components, pagesCont
 	setReframeHydrationEnabled(false)
 	state.THEME_ENV?.setHydrationEnabled?.(false)
 	const mdxComponent = pageMeta.mdxComponent
-	const PageContent = () => mdxComponent()
+	const PageContent = () => mdxComponent({ components })
 
 	try {
 		const renderResult = await new Promise((resolve, reject) => {

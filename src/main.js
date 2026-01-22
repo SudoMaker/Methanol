@@ -20,7 +20,9 @@
 
 import { loadUserConfig, applyConfig } from './config.js'
 import { runViteDev } from './dev-server.js'
-import { buildHtmlEntries, runViteBuild } from './build-system.js'
+import { buildHtmlEntries, runViteBuild, rewriteHtmlEntriesInWorkers, scanHtmlEntries } from './build-system.js'
+import { buildPrecacheManifest, patchServiceWorker, writeWebManifest } from './pwa.js'
+import { terminateWorkers } from './workers/build-pool.js'
 import { runPagefind } from './pagefind.js'
 import { generateRssFeed } from './feed.js'
 import { runVitePreview } from './preview-server.js'
@@ -28,6 +30,7 @@ import { cli, state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
 import { readFile } from 'fs/promises'
 import { style, logger } from './logger.js'
+import { createStageLogger } from './stage-logger.js'
 
 const printBanner = async () => {
 	try {
@@ -111,9 +114,21 @@ const main = async () => {
 	}
 	if (isBuild) {
 		const startTime = performance.now()
+		const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
+		const stageLogger = createStageLogger(logEnabled)
 		await runHooks(state.USER_PRE_BUILD_HOOKS)
 		await runHooks(state.THEME_PRE_BUILD_HOOKS)
-		const { entry, htmlCache, pagesContext, rssContent } = await buildHtmlEntries()
+		const {
+			htmlEntries,
+			pagesContext,
+			rssContent,
+			renderScans,
+			renderScansById,
+			htmlStageDir,
+			workers,
+			assignments
+		} = await buildHtmlEntries({ keepWorkers: true })
+		const scanResult = await scanHtmlEntries(htmlEntries, renderScans)
 		const buildContext = pagesContext
 			? {
 					pagesContext,
@@ -125,7 +140,27 @@ const main = async () => {
 			: null
 		await runHooks(state.USER_PRE_BUNDLE_HOOKS, buildContext)
 		await runHooks(state.THEME_PRE_BUNDLE_HOOKS, buildContext)
-		await runViteBuild(entry, htmlCache)
+		const manifest = await runViteBuild({ ...scanResult, htmlEntries })
+		const rewriteToken = stageLogger.start('Rewriting HTML')
+		try {
+			await rewriteHtmlEntriesInWorkers({
+				pages: pagesContext?.pagesAll || pagesContext?.pages || [],
+				htmlStageDir,
+				manifest,
+				scanResult,
+				renderScansById,
+				workers,
+				assignments,
+				onProgress: (done, total) => {
+					stageLogger.update(rewriteToken, `Rewriting HTML [${done}/${total}]`)
+				}
+			})
+		} finally {
+			if (workers) {
+				await terminateWorkers(workers)
+			}
+		}
+		stageLogger.end(rewriteToken)
 		await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
 		await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
 		if (state.PAGEFIND_ENABLED) {
@@ -133,6 +168,13 @@ const main = async () => {
 		}
 		if (state.RSS_ENABLED) {
 			await generateRssFeed(pagesContext, rssContent)
+		}
+		if (state.PWA_ENABLED) {
+			await writeWebManifest({ distDir: state.DIST_DIR, options: state.PWA_OPTIONS })
+			const precache = await buildPrecacheManifest({ distDir: state.DIST_DIR, options: state.PWA_OPTIONS })
+			if (precache?.manifestHash) {
+				await patchServiceWorker({ distDir: state.DIST_DIR, manifestHash: precache.manifestHash })
+			}
 		}
 		await runHooks(state.THEME_POST_BUILD_HOOKS, buildContext)
 		await runHooks(state.USER_POST_BUILD_HOOKS, buildContext)

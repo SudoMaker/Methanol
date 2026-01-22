@@ -214,7 +214,7 @@ export const runViteDev = async () => {
 
 	const prebuildHtmlCache = async (token) => {
 		if (!pagesContext || token !== pagesContextToken) return
-		const pages = pagesContext.pages || []
+		const pages = pagesContext.pagesAll || pagesContext.pages || []
 		if (!pages.length) return
 		const { workers, assignments } = createBuildWorkers(pages.length, { command: 'serve' })
 		const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
@@ -691,7 +691,9 @@ export const runViteDev = async () => {
 			source: resolved.source
 		})
 		if (!nextEntry) return false
-		const prevEntry = pagesContext.pages?.find?.((page) => page.path === path) || null
+		const prevEntry = pagesContext.pagesAll?.find?.((page) => page.path === path)
+			|| pagesContext.pages?.find?.((page) => page.path === path)
+			|| null
 		if (!prevEntry) return false
 		if (prevEntry.exclude !== nextEntry.exclude) return false
 		if (prevEntry.isIndex !== nextEntry.isIndex || prevEntry.dir !== nextEntry.dir) return false

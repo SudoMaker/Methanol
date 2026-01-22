@@ -18,9 +18,11 @@
  * under the License.
  */
 
-import '../register-loader.js'
 import { parentPort, workerData } from 'worker_threads'
+import { mkdir, writeFile, readFile, copyFile } from 'fs/promises'
+import { resolve, join, dirname } from 'path'
 import { style } from '../logger.js'
+import { scanRenderedHtml, rewriteHtmlContent, resolveManifestEntry } from '../html/worker-html.js'
 
 const { mode = 'production', configPath = null, command = 'build', cli: cliOverrides = null } =
 	workerData || {}
@@ -29,6 +31,8 @@ let pages = []
 let pagesContext = null
 let components = null
 let mdxPageIds = new Set()
+const parsedHtmlCache = new Map()
+const renderedHtmlCache = new Map()
 
 const ensureInit = async () => {
 	if (initPromise) return initPromise
@@ -110,11 +114,17 @@ const logPageError = (phase, page, error) => {
 	// console.error(error?.stack || error)
 }
 
+
 const handleSetPages = async (message) => {
 	const { pages: nextPages, excludedRoutes = [], excludedDirs = [] } = message || {}
 	pages = Array.isArray(nextPages) ? nextPages : []
 	mdxPageIds = new Set()
 	await rebuildPagesContext(new Set(excludedRoutes), new Set(excludedDirs))
+}
+
+const handleSetPagesLite = async (message) => {
+	const { pages: nextPages } = message || {}
+	pages = Array.isArray(nextPages) ? nextPages : []
 }
 
 const handleSyncUpdates = async (message) => {
@@ -170,6 +180,7 @@ const handleCompile = async (message) => {
 
 const handleRender = async (message) => {
 	const { ids = [], stage, feedIds = [] } = message || {}
+	const cacheHtml = Boolean(message?.cacheHtml)
 	const { renderHtml, renderPageContent } = await import('../mdx.js')
 	const feedSet = new Set(Array.isArray(feedIds) ? feedIds : [])
 	let completed = 0
@@ -198,9 +209,165 @@ const handleRender = async (message) => {
 					pageMeta: page
 				})
 			}
+			if (cacheHtml) {
+				renderedHtmlCache.set(id, html)
+			}
 			parentPort?.postMessage({ type: 'result', stage, result: { id, html, feedContent } })
 		} catch (error) {
 			logPageError('MDX render', page, error)
+			throw error
+		}
+		completed += 1
+		parentPort?.postMessage({ type: 'progress', stage, completed })
+	}
+}
+
+const resolveOutputName = (page) => {
+	if (!page) return 'index'
+	if (page.routePath === '/') return 'index'
+	if (page.isIndex && page.dir) {
+		return join(page.dir, 'index').replace(/\\/g, '/')
+	}
+	return page.routePath.slice(1)
+}
+
+const handleScan = async (message) => {
+	const { ids = [], stage, htmlStageDir } = message || {}
+	const useMemoryStage = !htmlStageDir
+	let completed = 0
+	for (const id of ids) {
+		const page = pages[id]
+		if (!page) {
+			completed += 1
+			parentPort?.postMessage({ type: 'progress', stage, completed })
+			continue
+		}
+		try {
+			const name = resolveOutputName(page)
+			const stageKey = `${name}.html`
+			const stagePath = htmlStageDir ? resolve(htmlStageDir, stageKey) : stageKey
+			const html = useMemoryStage
+				? renderedHtmlCache.get(id)
+				: await readFile(stagePath, 'utf-8')
+			if (html == null) {
+				throw new Error('HTML content not available for scan')
+			}
+			const scanned = await scanRenderedHtml(html, page.routePath)
+			if (scanned.html !== html) {
+				if (useMemoryStage) {
+					renderedHtmlCache.set(id, scanned.html)
+				} else {
+					await writeFile(stagePath, scanned.html)
+				}
+			}
+			const hasResources =
+				scanned.scan.scripts.length > 0 || scanned.scan.styles.length > 0 || scanned.scan.assets.length > 0
+			if (hasResources) {
+				parsedHtmlCache.set(id, {
+					plan: scanned.plan || null
+				})
+			}
+			parentPort?.postMessage({
+				type: 'result',
+				stage,
+				result: { id, stagePath, scan: scanned.scan }
+			})
+		} catch (error) {
+			logPageError('HTML scan', page, error)
+			throw error
+		}
+		completed += 1
+		parentPort?.postMessage({ type: 'progress', stage, completed })
+	}
+}
+
+const handleRewrite = async (message) => {
+	const {
+		ids = [],
+		stage,
+		htmlStageDir,
+		manifest,
+		entryModules = [],
+		commonScripts = [],
+		commonEntry = null,
+		scans = {}
+	} = message || {}
+	const { state } = await import('../state.js')
+	const { resolveBasePrefix } = await import('../config.js')
+	const basePrefix = resolveBasePrefix()
+	const scriptMap = new Map()
+	const styleMap = new Map()
+	for (const entry of entryModules) {
+		if (!entry?.publicPath || !entry?.manifestKey) continue
+		const manifestEntry = resolveManifestEntry(manifest, entry.manifestKey)
+		if (!manifestEntry?.file) continue
+		if (entry.kind === 'script') {
+			scriptMap.set(entry.publicPath, { file: manifestEntry.file, css: manifestEntry.css || null })
+		}
+		if (entry.kind === 'style') {
+			const cssFile = manifestEntry.css?.[0] || (manifestEntry.file.endsWith('.css') ? manifestEntry.file : null)
+			if (cssFile) {
+				styleMap.set(entry.publicPath, { file: cssFile, css: manifestEntry.css || null })
+			}
+		}
+	}
+	const commonSet = new Set(commonScripts || [])
+	const useMemoryStage = !htmlStageDir
+	let completed = 0
+	for (const id of ids) {
+		const page = pages[id]
+		if (!page) {
+			completed += 1
+			parentPort?.postMessage({ type: 'progress', stage, completed })
+			continue
+		}
+		try {
+			const name = resolveOutputName(page)
+			const stagePath = htmlStageDir ? resolve(htmlStageDir, `${name}.html`) : null
+			const distPath = resolve(state.DIST_DIR, `${name}.html`)
+			await mkdir(dirname(distPath), { recursive: true })
+			const scan = scans?.[id] || null
+			if (scan && Array.isArray(scan.scripts) && Array.isArray(scan.styles) && Array.isArray(scan.assets)) {
+				if (scan.scripts.length === 0 && scan.styles.length === 0 && scan.assets.length === 0) {
+					if (useMemoryStage) {
+						const html = renderedHtmlCache.get(id)
+						if (html == null) {
+							throw new Error('HTML content not available for rewrite')
+						}
+						await writeFile(distPath, html)
+					} else {
+						await copyFile(stagePath, distPath)
+					}
+					completed += 1
+					parentPort?.postMessage({ type: 'progress', stage, completed })
+					continue
+				}
+			}
+			const cached = parsedHtmlCache.get(id)
+			const plan = cached?.plan || null
+			const html = useMemoryStage
+				? renderedHtmlCache.get(id)
+				: await readFile(stagePath, 'utf-8')
+			if (html == null) {
+				throw new Error('HTML content not available for rewrite')
+			}
+			const output = rewriteHtmlContent(
+				html,
+				plan,
+				page.routePath,
+				basePrefix,
+				manifest,
+				scriptMap,
+				styleMap,
+				commonSet,
+				commonEntry
+			)
+			parsedHtmlCache.delete(id)
+			renderedHtmlCache.delete(id)
+			await writeFile(distPath, output)
+			parentPort?.postMessage({ type: 'result', stage, result: { id } })
+		} catch (error) {
+			logPageError('HTML rewrite', page, error)
 			throw error
 		}
 		completed += 1
@@ -217,6 +384,11 @@ parentPort?.on('message', async (message) => {
 			parentPort?.postMessage({ type: 'done', stage: 'setPages' })
 			return
 		}
+		if (type === 'setPagesLite') {
+			await handleSetPagesLite(message)
+			parentPort?.postMessage({ type: 'done', stage: 'setPagesLite' })
+			return
+		}
 		if (type === 'sync') {
 			await handleSyncUpdates(message)
 			parentPort?.postMessage({ type: 'done', stage: 'sync' })
@@ -229,6 +401,16 @@ parentPort?.on('message', async (message) => {
 		}
 		if (type === 'render') {
 			await handleRender(message)
+			parentPort?.postMessage({ type: 'done', stage })
+			return
+		}
+		if (type === 'scan') {
+			await handleScan(message)
+			parentPort?.postMessage({ type: 'done', stage })
+			return
+		}
+		if (type === 'rewrite') {
+			await handleRewrite(message)
 			parentPort?.postMessage({ type: 'done', stage })
 			return
 		}

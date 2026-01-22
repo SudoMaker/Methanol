@@ -34,7 +34,7 @@ const isIgnoredEntry = (name) => name.startsWith('.') || name.startsWith('_')
 
 const pageMetadataCache = new Map()
 const pageDerivedCache = new Map()
-const MDX_WORKER_URL = new URL('./workers/mdx-compile-worker.js', import.meta.url)
+const MDX_WORKER_URL = new URL('./workers/entry-mdx-compile-worker.js', import.meta.url)
 const cliOverrides = {
 	CLI_INTERMEDIATE_DIR: cli.CLI_INTERMEDIATE_DIR,
 	CLI_EMIT_INTERMEDIATE: cli.CLI_EMIT_INTERMEDIATE,
@@ -523,13 +523,14 @@ export const buildPageEntry = async ({ path, pagesDir, source }) => {
 	const isSpecialPage = isNotFoundPage || isOfflinePage
 	const isSiteRoot = routePath === '/'
 	const frontmatterIsRoot = Boolean(metadata.frontmatter?.isRoot)
-	const hidden = isSpecialPage
-		? true
-		: frontmatterHidden === false
+	const hidden =
+		frontmatterHidden === false
 			? false
 			: frontmatterHidden === true
 				? true
-				: frontmatterIsRoot
+				: isSpecialPage
+					? true
+					: frontmatterIsRoot
 	return {
 		routePath,
 		routeHref: withBase(routePath),
@@ -608,12 +609,12 @@ const collectPages = async () => {
 }
 
 const buildIndexFallback = (pages, siteName) => {
+	const isSpecialPage = (page) => page?.routePath === '/404' || page?.routePath === '/offline'
 	const visiblePages = pages
 		.filter(
 			(page) =>
 				page.routePath !== '/' &&
-				page.routePath !== '/404' &&
-				page.routePath !== '/offline'
+				(!(isSpecialPage(page)) || page.hidden === false)
 		)
 		.sort((a, b) => a.routePath.localeCompare(b.routePath))
 
@@ -694,6 +695,11 @@ const buildNavSequence = (nodes, pagesByRoute) => {
 
 export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDirs } = {}) => {
 	const pageList = Array.isArray(pages) ? pages : []
+	const pagesAll = pageList
+	const isSpecialPage = (page) => page?.routePath === '/404' || page?.routePath === '/offline'
+	const listForNavigation = pageList.filter(
+		(page) => !(isSpecialPage(page) && page.hidden !== false)
+	)
 	const routeExcludes = excludedRoutes || new Set()
 	const dirExcludes = excludedDirs || new Set()
 	const pagesByRoute = new Map()
@@ -705,7 +711,7 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 	const getPageByRoute = (routePath, options = {}) => {
 		const { path } = options || {}
 		if (path) {
-			for (const page of pages) {
+			for (const page of pagesAll) {
 				if (page.routePath === routePath && page.path === path) {
 					return page
 				}
@@ -715,7 +721,7 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 	}
 	const filterPagesForRoot = (rootPath) => {
 		const normalizedRoot = normalizeRoutePath(rootPath || '/')
-		return pages.filter((page) => {
+		return listForNavigation.filter((page) => {
 			const resolvedRoot = resolveRootPath(page.routePath, pagesByRoute)
 			if (normalizedRoot === '/') {
 				return resolvedRoot === '/' || page.routePath === resolvedRoot
@@ -783,6 +789,13 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 				href: withBase(feedPath)
 			}
 		: { enabled: false }
+	const pwa = state.PWA_ENABLED
+		? {
+				enabled: true,
+				manifestPath: '/manifest.webmanifest',
+				manifestHref: withBase('/manifest.webmanifest')
+			}
+		: { enabled: false }
 	const site = {
 		...userSite,
 		base: siteBase,
@@ -800,11 +813,13 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 			build: state.PAGEFIND_BUILD || null
 		},
 		feed,
+		pwa,
 		generatedAt: new Date().toISOString()
 	}
 	const excludedDirPaths = new Set(Array.from(dirExcludes).map((dir) => `/${dir}`))
 	const pagesContext = {
-		pages: pageList,
+		pages: listForNavigation,
+		pagesAll,
 		pagesByRoute,
 		getPageByRoute,
 		pagesTree: pagesTreeGlobal,
@@ -864,7 +879,7 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 			}
 		},
 		refreshLanguages: () => {
-			pagesContext.languages = collectLanguagesFromPages(pages)
+			pagesContext.languages = collectLanguagesFromPages(pagesAll)
 			pagesContext.getLanguageForRoute = (routePath) =>
 				resolveLanguageForRoute(pagesContext.languages, routePath)
 		},

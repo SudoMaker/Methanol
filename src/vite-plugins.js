@@ -162,6 +162,10 @@ export const methanolResolverPlugin = () => {
 	return {
 		name: 'methanol-resolver',
 		resolveId(id) {
+			if (id.startsWith('/.methanol/')) {
+				return resolve(state.PAGES_DIR, '.methanol', id.slice('/.methanol/'.length))
+			}
+
 			if (id === 'refui' || id.startsWith('refui/')) {
 				try {
 					return projectRequire.resolve(id)

@@ -31,6 +31,8 @@ import { HTMLRenderer } from './renderer.js'
 import { reframeEnv } from './components.js'
 import { env as createEnv } from './reframe.js'
 import { cached, cachedStr } from './utils.js'
+import { normalizeBasePrefix } from './base.js'
+import { resolvePwaOptions } from './pwa.js'
 import defaultTheme from '../themes/default/index.js'
 
 const CONFIG_FILENAMES = [
@@ -431,12 +433,7 @@ export const applyConfig = async (config, mode) => {
 			state.MERGED_ASSETS_DIR = null
 		} else {
 			// We need to merge
-			const nodeModulesPath = resolve(root, 'node_modules')
-			if (existsSync(nodeModulesPath)) {
-				state.MERGED_ASSETS_DIR = resolve(nodeModulesPath, '.methanol/assets')
-			} else {
-				state.MERGED_ASSETS_DIR = resolve(state.PAGES_DIR || resolve(root, 'pages'), '.methanol/assets')
-			}
+			state.MERGED_ASSETS_DIR = resolve(state.PAGES_DIR || resolve(root, 'pages'), '.methanol/assets')
 			state.STATIC_DIR = state.MERGED_ASSETS_DIR
 		}
 	} else {
@@ -471,20 +468,14 @@ export const applyConfig = async (config, mode) => {
 		state.RSS_OPTIONS = { ...(state.RSS_OPTIONS || {}), atom: cli.CLI_ATOM }
 	}
 	
-	if (hasOwn(config, 'pwa')) {
-		if (config.pwa === true) {
-			state.PWA_ENABLED = true
-			state.PWA_OPTIONS = null
-		} else if (typeof config.pwa === 'object' && config.pwa !== null) {
-			state.PWA_ENABLED = true
-			state.PWA_OPTIONS = config.pwa
-		} else {
-			state.PWA_ENABLED = false
-			state.PWA_OPTIONS = null
-		}
-	}
+	const resolvedPwa = resolvePwaOptions(config.pwa)
+	state.PWA_ENABLED = resolvedPwa.enabled
+	state.PWA_OPTIONS = resolvedPwa.options
 	if (cli.CLI_PWA !== undefined) {
 		state.PWA_ENABLED = cli.CLI_PWA
+		if (cli.CLI_PWA && !state.PWA_OPTIONS) {
+			state.PWA_OPTIONS = resolvePwaOptions(true).options
+		}
 	}
 	state.USER_PRE_BUILD_HOOKS = normalizeHooks(config.preBuild)
 	state.USER_POST_BUILD_HOOKS = normalizeHooks(config.postBuild)
@@ -619,23 +610,7 @@ export const resolveUserViteConfig = async (command) => {
 	return state.RESOLVED_VITE_CONFIG
 }
 
-export const resolveBasePrefix = cached(() => {
-	const value = state.VITE_BASE || state.SITE_BASE || '/'
-	if (!value || value === '/' || value === './') return ''
-	if (typeof value !== 'string') return ''
-	let base = value.trim()
-	if (!base || base === '/' || base === './') return ''
-	if (base.startsWith('http://') || base.startsWith('https://')) {
-		try {
-			base = new URL(base).pathname
-		} catch {
-			return ''
-		}
-	}
-	if (!base.startsWith('/')) return ''
-	if (base.endsWith('/')) base = base.slice(0, -1)
-	return base
-})
+export const resolveBasePrefix = cached(() => normalizeBasePrefix(state.VITE_BASE || state.SITE_BASE || '/'))
 
 export const withBase = cachedStr((value) => {
 	if (!value || typeof value !== 'string') return value

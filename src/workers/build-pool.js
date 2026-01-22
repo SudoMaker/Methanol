@@ -22,7 +22,7 @@ import { cpus } from 'os'
 import { Worker } from 'worker_threads'
 import { state, cli } from '../state.js'
 
-const BUILD_WORKER_URL = new URL('./build-worker.js', import.meta.url)
+const BUILD_WORKER_URL = new URL('./entry-build-worker.js', import.meta.url)
 const cliOverrides = {
 	CLI_INTERMEDIATE_DIR: cli.CLI_INTERMEDIATE_DIR,
 	CLI_EMIT_INTERMEDIATE: cli.CLI_EMIT_INTERMEDIATE,

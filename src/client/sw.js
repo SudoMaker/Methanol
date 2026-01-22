@@ -18,39 +18,16 @@
  * under the License.
  */
 
-import { clientsClaim } from 'workbox-core'
-import { registerRoute } from 'workbox-routing'
 import { cached, cachedStr } from '../utils.js'
+import { normalizeBasePrefix } from '../base.js'
 
-const __WB_MANIFEST = self.__WB_MANIFEST
-const BATCH_SIZE = 5
+const MANIFEST_HASH = '__METHANOL_MANIFEST_HASH__'
+const DEFAULT_BATCH_SIZE = 5
 const REVISION_HEADER = 'X-Methanol-Revision'
 
 self.skipWaiting()
-clientsClaim()
 
-const resolveBasePrefix = cached(() => {
-	let base = import.meta.env?.BASE_URL || '/'
-	if (!base || base === '/' || base === './') return ''
-	if (base.startsWith('http://') || base.startsWith('https://')) {
-		try {
-			base = new URL(base).pathname
-		} catch {
-			return ''
-		}
-	}
-	if (!base.startsWith('/')) return ''
-	if (base.endsWith('/')) base = base.slice(0, -1)
-	return base
-})
-
-const resolveCurrentBasePrefix = cached(() => {
-	const prefix = resolveBasePrefix()
-	if (!prefix) {
-		return self.location.origin
-	}
-	return new URL(prefix, self.location.origin).href
-})
+const resolveBasePrefix = cached(() => normalizeBasePrefix(import.meta.env?.BASE_URL || '/'))
 
 const withBase = cachedStr((path) => {
 	const prefix = resolveBasePrefix()
@@ -58,73 +35,93 @@ const withBase = cachedStr((path) => {
 	return `${prefix}${path}`
 })
 
+const MANIFEST_URL = withBase('/precache-manifest.json')
+
 const NOT_FOUND_URL = new URL(withBase('/404.html'), self.location.origin).href.toLowerCase()
 const OFFLINE_FALLBACK_URL = new URL(withBase('/offline.html'), self.location.origin).href.toLowerCase()
 
 const PAGES_CACHE = withBase(':methanol-pages-swr')
 const ASSETS_CACHE = withBase(':methanol-assets-swr')
 
-const stripBase = cachedStr((url) => {
-	const base = resolveCurrentBasePrefix()
-	if (!base) return url
-	if (url === base) return '/'
-	if (url.startsWith(`${base}/`)) return url.slice(base.length)
-	return url
-})
 
-function isRootOrAssets(url) {
-	const basePath = stripBase(url)
-	if (basePath.startsWith('/assets/')) return true
-	const trimmed = basePath.startsWith('/') ? basePath.slice(1) : basePath
-	return trimmed !== '' && !trimmed.includes('/')
+let manifestCache = null
+let manifestPromise = null
+let manifestIndexCache = null
+let manifestIndexPromise = null
+
+const resolveManifestUrl = () => {
+	if (!MANIFEST_HASH || MANIFEST_HASH === '__METHANOL_MANIFEST_HASH__') return MANIFEST_URL
+	return `${MANIFEST_URL}?v=${MANIFEST_HASH}`
 }
 
-const getManifestEntries = cached(() => {
-	const entries = []
-	for (const entry of __WB_MANIFEST) {
-		if (!entry?.url) continue
-		entries.push({
-			url: new URL(entry.url, self.location.href).toString(),
-			revision: entry.revision
-		})
-	}
-	return entries
-})
-
-const getManifestIndex = cached(() => {
-	const map = new Map()
-	for (const entry of getManifestEntries()) {
-		map.set(manifestKey(entry.url), entry.revision ?? null)
-	}
-	return map
-})
-
-function collectManifestUrls() {
-	return getManifestEntries().map((entry) => entry.url)
+async function loadManifest(force = false) {
+	if (manifestCache && !force) return manifestCache
+	if (manifestPromise && !force) return manifestPromise
+	manifestPromise = (async () => {
+		if (!force) {
+			const cached = await idbGet(KEY_MANIFEST_DATA).catch(() => null)
+			if (cached && cached.entries) {
+				if (!cached.hash || cached.hash === MANIFEST_HASH) {
+					manifestCache = cached
+					manifestIndexCache = null
+					manifestIndexPromise = null
+					return cached
+				}
+			}
+		}
+		try {
+			const url = new URL(resolveManifestUrl(), self.location.origin).toString()
+			const res = await fetch(url, { cache: 'no-store' })
+			if (!res || !res.ok) {
+				throw new Error('manifest fetch failed')
+			}
+			const data = await res.json()
+			const entries = Array.isArray(data?.entries) ? data.entries : []
+			const normalized = entries
+				.filter((entry) => entry && entry.url)
+				.map((entry) => ({
+					url: new URL(entry.url, self.location.href).toString(),
+					revision: entry.revision ?? null
+				}))
+			const installCount = Number.isFinite(data?.installCount)
+				? Math.max(0, Math.min(normalized.length, data.installCount))
+				: normalized.length
+			const batchSize = Number.isFinite(data?.batchSize) ? data.batchSize : DEFAULT_BATCH_SIZE
+			const result = { entries: normalized, installCount, batchSize, hash: data?.hash || '' }
+			manifestCache = result
+			manifestIndexCache = null
+			manifestIndexPromise = null
+			await idbSet(KEY_MANIFEST_DATA, result).catch(() => {})
+			return result
+		} catch (error) {
+			if (manifestCache) return manifestCache
+			throw error
+		} finally {
+			manifestPromise = null
+		}
+	})()
+	return manifestPromise
 }
 
-function prioritizeManifestUrls(urls) {
-	const prioritized = []
-	const other = []
+async function getManifestEntries() {
+	const data = await loadManifest()
+	return data.entries
+}
 
-	for (const url of urls) {
-		const lower = url.toLowerCase()
-		if (lower.endsWith('.css') && isRootOrAssets(url)) {
-			prioritized.push(url)
-			continue
+async function getManifestIndex() {
+	if (manifestIndexCache) return manifestIndexCache
+	if (manifestIndexPromise) return manifestIndexPromise
+	manifestIndexPromise = (async () => {
+		const map = new Map()
+		const entries = await getManifestEntries()
+		for (const entry of entries) {
+			map.set(manifestKey(entry.url), entry.revision ?? null)
 		}
-		if ((lower.endsWith('.js') || lower.endsWith('.mjs')) && isRootOrAssets(url)) {
-			prioritized.push(url)
-			continue
-		}
-		if (lower.endsWith('.html') && (lower === NOT_FOUND_URL || lower === OFFLINE_FALLBACK_URL)) {
-			prioritized.unshift(url)
-			continue
-		}
-		other.push(url)
-	}
-
-	return [prioritized, other]
+		manifestIndexCache = map
+		manifestIndexPromise = null
+		return map
+	})()
+	return manifestIndexPromise
 }
 
 // Precache prioritized entries during install
@@ -132,41 +129,60 @@ self.addEventListener('install', (event) => {
 	event.waitUntil(
 		(async () => {
 			try {
-				await idbSet(KEY_FORCE, 1)
-				await idbSet(KEY_INDEX, 0)
-			} catch {}
-			const pageCache = await openCache(PAGES_CACHE)
-			const assetCache = await openCache(ASSETS_CACHE)
-			const manifestEntries = getManifestEntries()
-			const manifestMap = buildManifestMap(manifestEntries)
-			const manifestUrls = manifestEntries.map((entry) => entry.url)
-			const [prioritized] = prioritizeManifestUrls(manifestUrls)
-			const { failedIndex } = await runConcurrentQueue(prioritized, {
-				concurrency: BATCH_SIZE,
-				handler: async (url) => {
-					const isHtml = url.endsWith('.html')
-					const cacheName = isHtml ? PAGES_CACHE : ASSETS_CACHE
-					const cached = await matchCache(cacheName, url)
-					const key = manifestKey(url)
-					const currentRevision = manifestMap.get(key) ?? null
-					const shouldFetch = shouldFetchWithRevision({
-						cached,
-						currentRevision
-					})
-					if (!shouldFetch) return true
-					const cache = isHtml ? pageCache : assetCache
-					return fetchAndCache(cache, url, currentRevision)
+				const prevHash = await idbGet(KEY_MANIFEST)
+				const swChanged = prevHash !== MANIFEST_HASH
+				if (swChanged) {
+					await idbSet(KEY_FORCE, 1)
+					await idbSet(KEY_INDEX, 0)
+					await idbSet(KEY_MANIFEST, MANIFEST_HASH)
+					await idbSet(KEY_MANIFEST_DATA, null)
 				}
-			})
-			if (failedIndex !== null) {
-				throw new Error('install cache failed')
+				const manifest = await loadManifest(swChanged)
+				await installManifest(manifest)
+			} catch (error) {
+				throw error
 			}
 		})()
 	)
 })
 
+async function installManifest(manifest) {
+	const pageCache = await openCache(PAGES_CACHE)
+	const assetCache = await openCache(ASSETS_CACHE)
+	const manifestEntries = manifest.entries
+	const manifestMap = buildManifestMap(manifestEntries)
+	const installCount = manifest.installCount ?? manifestEntries.length
+	const installUrls = manifestEntries.slice(0, installCount).map((entry) => entry.url)
+	const batchSize = Math.max(1, manifest.batchSize || DEFAULT_BATCH_SIZE)
+	const { failedIndex } = await runConcurrentQueue(installUrls, {
+		concurrency: batchSize,
+		handler: async (url) => {
+			const isHtml = url.endsWith('.html')
+			const cacheName = isHtml ? PAGES_CACHE : ASSETS_CACHE
+			const cached = await matchCache(cacheName, url)
+			const key = manifestKey(url)
+			const currentRevision = manifestMap.get(key) ?? null
+			const shouldFetch = shouldFetchWithRevision({
+				cached,
+				currentRevision
+			})
+			if (!shouldFetch) return true
+			const cache = isHtml ? pageCache : assetCache
+			return fetchAndCache(cache, url, currentRevision)
+		}
+	})
+	if (failedIndex !== null) {
+		throw new Error('install cache failed')
+	}
+}
+
 self.addEventListener('activate', (event) => {
-	warmManifestResumable()
+	event.waitUntil(
+		(async () => {
+			await self.clients.claim()
+			await warmManifestResumable()
+		})()
+	)
 })
 
 function stripSearch(urlString) {
@@ -466,88 +482,114 @@ async function serveOffline() {
 	})
 }
 
-// NAVIGATIONS: cache-first for manifest pages, network fallback for others
-registerRoute(
-	({ request, url }) => (isHtmlNavigation(request) || isPrefetch(request)) && url.origin === self.location.origin,
-	async ({ event, request }) => {
-		const normalizedKey = normalizeNavigationURL(new URL(request.url)).toString()
-		const key = manifestKey(normalizedKey)
-		const manifestRevision = getManifestIndex().get(key) ?? null
-		const inManifest = getManifestIndex().has(key)
+const handleNavigationRequest = async (event, request, index) => {
+	const normalizedKey = normalizeNavigationURL(new URL(request.url)).toString()
+	const key = manifestKey(normalizedKey)
+	const manifestRevision = index.get(key) ?? null
+	const inManifest = index.has(key)
 
-		if (inManifest) {
-			const cached = await matchCache(PAGES_CACHE, normalizedKey)
-			const shouldRevalidate = shouldRevalidateCached(cached, manifestRevision)
-			if (cached && !shouldRevalidate) return cached
-			if (cached && shouldRevalidate) {
-				const fresh = await fetchWithCleanUrlFallback(event, request, {
-					usePreload: isHtmlNavigation(request),
-					allowNotOk: true
-				})
-				if (fresh && fresh.status === 200) {
-					await putCache(PAGES_CACHE, normalizedKey, fresh.clone(), manifestRevision)
-					return fresh
-				}
-				if (fresh && fresh.status === 404) {
-					return serveNotFound()
-				}
-				if (fresh) return fresh
-				return cached
-			}
-		}
-
-		const fresh = await fetchWithCleanUrlFallback(event, request, {
-			usePreload: isHtmlNavigation(request),
-			allowNotOk: true
-		})
-		if (fresh && fresh.status === 200) {
-			if (inManifest) {
-				await putCache(PAGES_CACHE, normalizedKey, fresh.clone(), manifestRevision)
-			}
-			return fresh
-		}
-		if (fresh && fresh.status === 404) {
-			return serveNotFound()
-		}
-
-		if (fresh) return fresh
-
-		return serveOffline()
-	}
-)
-
-registerRoute(
-	({ request, url }) =>
-		url.origin === self.location.origin &&
-		request.method === 'GET' &&
-		request.destination !== 'document' &&
-		!isHtmlNavigation(request) &&
-		getManifestIndex().has(manifestKey(request.url)),
-	async ({ request }) => {
-		const key = manifestKey(request.url)
-		const manifestRevision = getManifestIndex().get(key) ?? null
-		const cached = await matchCache(ASSETS_CACHE, key)
+	if (inManifest) {
+		const cached = await matchCache(PAGES_CACHE, normalizedKey)
 		const shouldRevalidate = shouldRevalidateCached(cached, manifestRevision)
 		if (cached && !shouldRevalidate) return cached
-
-		try {
-			const res = await fetch(request)
-			if (res && res.status === 200) {
-				await putCache(ASSETS_CACHE, key, res.clone(), manifestRevision)
+		if (cached && shouldRevalidate) {
+			const fresh = await fetchWithCleanUrlFallback(event, request, {
+				usePreload: isHtmlNavigation(request),
+				allowNotOk: true
+			})
+			if (fresh && fresh.status === 200) {
+				await putCache(PAGES_CACHE, normalizedKey, fresh.clone(), manifestRevision)
+				return fresh
 			}
-			return res
-		} catch {
-			if (cached) return cached
-			return new Response(null, { status: 503 })
+			if (fresh && fresh.status === 404) {
+				return serveNotFound()
+			}
+			if (fresh) return fresh
+			return cached
 		}
 	}
-)
+
+	const fresh = await fetchWithCleanUrlFallback(event, request, {
+		usePreload: isHtmlNavigation(request),
+		allowNotOk: true
+	})
+	if (fresh && fresh.status === 200) {
+		if (inManifest) {
+			await putCache(PAGES_CACHE, normalizedKey, fresh.clone(), manifestRevision)
+		}
+		return fresh
+	}
+	if (fresh && fresh.status === 404) {
+		return serveNotFound()
+	}
+
+	if (fresh) return fresh
+
+	return serveOffline()
+}
+
+const handleAssetRequest = async (request, index) => {
+	const key = manifestKey(request.url)
+	const manifestRevision = index.get(key) ?? null
+	const cached = await matchCache(ASSETS_CACHE, key)
+	const shouldRevalidate = shouldRevalidateCached(cached, manifestRevision)
+	if (cached && !shouldRevalidate) return cached
+
+	try {
+		const res = await fetch(request)
+		if (res && res.status === 200) {
+			await putCache(ASSETS_CACHE, key, res.clone(), manifestRevision)
+		}
+		return res
+	} catch {
+		if (cached) return cached
+		return new Response(null, { status: 503 })
+	}
+}
+
+self.addEventListener('fetch', (event) => {
+	const request = event.request
+	if (!request || request.method !== 'GET') return
+	let url = null
+	try {
+		url = new URL(request.url)
+	} catch {
+		return
+	}
+	if (url.origin !== self.location.origin) return
+
+	event.respondWith(
+		(async () => {
+			try {
+				const manifestKeyUrl = stripSearch(new URL(MANIFEST_URL, self.location.origin).toString()).toString()
+				if (stripSearch(request.url).toString() === manifestKeyUrl) {
+					return fetch(request)
+				}
+				if (isHtmlNavigation(request) || isPrefetch(request)) {
+					const index = await getManifestIndex().catch(() => new Map())
+					return await handleNavigationRequest(event, request, index)
+				}
+				const index = await getManifestIndex().catch(() => new Map())
+				if (
+					request.destination !== 'document' &&
+					!isHtmlNavigation(request) &&
+					index.has(manifestKey(request.url))
+				) {
+					return await handleAssetRequest(request, index)
+				}
+			} catch {}
+			return fetch(request)
+		})()
+	)
+})
 
 const DB_NAME = withBase(':methanol-pwa-warm-db')
 const DB_STORE = 'kv'
 const KEY_INDEX = 'warmIndex'
 const KEY_LEASE = 'warmLease'
 const KEY_FORCE = 'warmForce'
+const KEY_MANIFEST = 'warmManifestHash'
+const KEY_MANIFEST_DATA = 'warmManifestData'
 
 function idbOpen() {
 	return new Promise((resolve, reject) => {
@@ -639,7 +681,12 @@ async function releaseLease(lease) {
 }
 
 async function warmManifestResumable({ force = false } = {}) {
-	if (!__WB_MANIFEST.length) return
+	let manifest = null
+	try {
+		manifest = await loadManifest()
+	} catch {
+		return
+	}
 
 	const forceFlag = await idbGet(KEY_FORCE)
 	if (forceFlag) force = true
@@ -656,9 +703,9 @@ async function warmManifestResumable({ force = false } = {}) {
 
 	let completed = false
 	try {
-		const manifestEntries = getManifestEntries()
+		const manifestEntries = manifest.entries
 		const manifestMap = buildManifestMap(manifestEntries)
-		const [, urls] = prioritizeManifestUrls(manifestEntries.map((entry) => entry.url))
+		const urls = manifestEntries.slice(manifest.installCount).map((entry) => entry.url)
 		if (!urls.length) return
 		if (index >= urls.length) {
 			completed = true
@@ -667,7 +714,7 @@ async function warmManifestResumable({ force = false } = {}) {
 
 		const startIndex = index
 		const { failedIndex } = await runConcurrentQueue(urls.slice(startIndex), {
-			concurrency: BATCH_SIZE,
+			concurrency: Math.max(1, manifest.batchSize || DEFAULT_BATCH_SIZE),
 			handler: async (abs) => {
 				const leaseOk = await renewLease(lease, leaseMs)
 				if (!leaseOk) return false
