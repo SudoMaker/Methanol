@@ -1,6 +1,6 @@
 {
   "name": "methanol",
-  "version": "0.0.19",
+  "version": "0.0.21",
   "description": "Static site generator powered by rEFui and MDX",
   "main": "./index.js",
   "type": "module",
