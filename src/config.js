@@ -481,10 +481,16 @@ export const applyConfig = async (config, mode) => {
 	state.USER_POST_BUILD_HOOKS = normalizeHooks(config.postBuild)
 	state.USER_PRE_BUNDLE_HOOKS = normalizeHooks(config.preBundle)
 	state.USER_POST_BUNDLE_HOOKS = normalizeHooks(config.postBundle)
+	state.USER_PRE_WRITE_HOOKS = normalizeHooks(config.preWrite)
+	state.USER_POST_WRITE_HOOKS = normalizeHooks(config.postWrite)
+	state.USER_FINALIZE_HOOKS = normalizeHooks(config.finalize)
 	state.THEME_PRE_BUILD_HOOKS = normalizeHooks(state.USER_THEME?.preBuild)
 	state.THEME_POST_BUILD_HOOKS = normalizeHooks(state.USER_THEME?.postBuild)
 	state.THEME_PRE_BUNDLE_HOOKS = normalizeHooks(state.USER_THEME?.preBundle)
 	state.THEME_POST_BUNDLE_HOOKS = normalizeHooks(state.USER_THEME?.postBundle)
+	state.THEME_PRE_WRITE_HOOKS = normalizeHooks(state.USER_THEME?.preWrite)
+	state.THEME_POST_WRITE_HOOKS = normalizeHooks(state.USER_THEME?.postWrite)
+	state.THEME_FINALIZE_HOOKS = normalizeHooks(state.USER_THEME?.finalize)
 	if (hasOwn(config, 'gfm')) {
 		state.GFM_ENABLED = config.gfm !== false
 	}

@@ -140,11 +140,23 @@ const main = async () => {
 			: null
 		await runHooks(state.USER_PRE_BUNDLE_HOOKS, buildContext)
 		await runHooks(state.THEME_PRE_BUNDLE_HOOKS, buildContext)
-		let manifest = null
+
+		let finalizeToken = null
 		try {
-			manifest = await runViteBuild({
+			await runViteBuild({
 				...scanResult,
 				htmlEntries,
+				preWrite: async () => {
+					await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
+					await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
+					await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
+					await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
+				},
+				postWrite: async () => {
+					await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
+					await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
+					finalizeToken = stageLogger.start('Finalizing build')
+				},
 				rewrite: {
 					pages: pagesContext?.pagesAll || pagesContext?.pages || [],
 					htmlStageDir,
@@ -159,8 +171,9 @@ const main = async () => {
 				await terminateWorkers(workers)
 			}
 		}
-		await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
-		await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
+		await runHooks(state.THEME_FINALIZE_HOOKS, buildContext)
+		await runHooks(state.USER_FINALIZE_HOOKS, buildContext)
+		stageLogger.end(finalizeToken)
 		if (state.PAGEFIND_ENABLED) {
 			await runPagefind()
 		}

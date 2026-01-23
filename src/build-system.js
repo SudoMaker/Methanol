@@ -438,7 +438,9 @@ export const runViteBuild = async (inputs) => {
 	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
 	const stageLogger = createStageLogger(logEnabled)
 	const token = stageLogger.start('Building bundle')
-	const rewriteOptions = inputs?.rewrite || null
+	const rewriteOptions = inputs.rewrite || null
+	const preWrite = typeof inputs.preWrite === 'function' ? inputs.preWrite : null
+	const postWrite = typeof inputs.postWrite === 'function' ? inputs.postWrite : null
 	let manifestData = null
 	let bundleEnded = false
 	const endBundleStage = () => {
@@ -455,13 +457,13 @@ export const runViteBuild = async (inputs) => {
 		})
 	}
 	const copyPublicDirEnabled = state.STATIC_DIR !== false
-	const entryModules = Array.isArray(inputs?.entryModules) ? inputs.entryModules : []
+	const entryModules = Array.isArray(inputs.entryModules) ? inputs.entryModules : []
 	const entryInputs = entryModules
 		.filter((entry) => entry && entry.kind !== 'style')
 		.map((entry) => entry.fsPath)
 		.filter(Boolean)
 		.sort()
-	const htmlEntries = Array.isArray(inputs?.htmlEntries) ? inputs.htmlEntries : []
+	const htmlEntries = Array.isArray(inputs.htmlEntries) ? inputs.htmlEntries : []
 	const htmlInputs = htmlEntries
 		.filter((entry) => entry?.source === 'static' && entry.inputPath)
 		.map((entry) => entry.inputPath)
@@ -525,7 +527,7 @@ export const runViteBuild = async (inputs) => {
 		...(finalConfig.build || {}),
 		outDir: state.DIST_DIR,
 		emptyOutDir: true,
-		manifest: true,
+		manifest: finalConfig.build?.manifest === undefined ? true : finalConfig.build.manifest,
 		copyPublicDir: copyPublicDirEnabled,
 		rollupOptions: {
 			...((finalConfig.build && finalConfig.build.rollupOptions) || {}),
@@ -545,15 +547,31 @@ export const runViteBuild = async (inputs) => {
 		? finalConfig.build.manifest
 		: '.vite/manifest.json'
 	const manifestPath = resolve(state.DIST_DIR, manifestFileName.replace(/^\//, ''))
+	const manifestEnabled = finalConfig.build?.manifest !== false
 	let rewriteDone = false
-	const loadManifestFromDisk = async () => {
+	let preWriteDone = false
+	let postWriteDone = false
+	const loadManifest = async () => {
+		if (!manifestEnabled) return null
 		if (!existsSync(manifestPath)) return null
 		const raw = await readFile(manifestPath, 'utf-8')
 		return JSON.parse(raw)
 	}
+	const runPreWrite = async () => {
+		if (rewriteOptions) {
+			endBundleStage()
+		}
+		if (preWrite) {
+			await preWrite({ manifest: manifestData })
+		}
+	}
+	const runPostWrite = async () => {
+		if (postWrite) {
+			await postWrite({ manifest: manifestData })
+		}
+	}
 	const runRewrite = async () => {
-		if (!rewriteOptions || rewriteDone) return
-		endBundleStage()
+		if (!rewriteOptions || rewriteDone || !manifestData) return
 		const rewriteToken = logEnabled ? stageLogger.start('Rewriting HTML') : null
 		try {
 			await rewriteHtmlEntriesInWorkers({
@@ -577,49 +595,22 @@ export const runViteBuild = async (inputs) => {
 		apply: 'build',
 		enforce: 'post',
 		async writeBundle() {
-			if (manifestData) {
-				await runRewrite()
-				return
-			}
-			const parsed = await loadManifestFromDisk()
-			if (!parsed) return
-			manifestData = parsed
+			manifestData = await loadManifest()
+			await runPreWrite()
 			await runRewrite()
-		},
-		async closeBundle() {
-			if (manifestData) {
-				await runRewrite()
-				return
-			}
-			const parsed = await loadManifestFromDisk()
-			if (!parsed) return
-			manifestData = parsed
-			await runRewrite()
+			await runPostWrite()
 		}
 	}
 
 	finalConfig.plugins = [...(finalConfig.plugins || []), postBundlePlugin]
 
-	const originalLog = console.log
-	const originalWarn = console.warn
-	if (!cli.CLI_VERBOSE) {
-		console.log = () => {}
-		console.warn = () => {}
-	}
-
-	try {
-		await viteBuild(finalConfig)
-	} finally {
-		if (!cli.CLI_VERBOSE) {
-			console.log = originalLog
-			console.warn = originalWarn
-		}
-	}
+	await viteBuild(finalConfig)
 	endBundleStage()
 	const methanolManifestDir = resolve(state.PAGES_DIR, '.methanol')
 	const methanolManifestPath = resolve(methanolManifestDir, 'manifest.json')
 	try {
-		const parsed = manifestData || JSON.parse(await readFile(manifestPath, 'utf-8'))
+		const parsed = manifestData || (manifestEnabled ? JSON.parse(await readFile(manifestPath, 'utf-8')) : null)
+		if (!parsed) return {}
 		await ensureDir(methanolManifestDir)
 		await writeFile(methanolManifestPath, JSON.stringify(parsed, null, 2))
 		await rm(manifestPath, { force: true })
