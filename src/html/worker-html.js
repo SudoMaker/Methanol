@@ -148,7 +148,7 @@ const rewriteInlineScripts = async (html, routePath) => {
 		await writeFile(fsPath, content)
 		const publicPath = `/.methanol/inline/${filename}`
 		const srcAttr = `src="${joinBasePrefix(basePrefix, publicPath)}"`
-		const replacement = `<script type="module" ${srcAttr}></script>`
+		const replacement = `<script type="module" crossorigin ${srcAttr}></script>`
 		patches.push({ start: entry.start, end: entry.end, text: replacement })
 	}
 
@@ -382,6 +382,9 @@ export const rewriteHtmlByPlan = (
 		const publicPath = resolved?.resolvedPath
 		if (!publicPath) continue
 		const attrs = { ...(entry.attrs || {}) }
+		if (!attrs.crossorigin) {
+			attrs.crossorigin = ''
+		}
 		if (commonScripts.has(publicPath)) {
 			if (!commonEntry?.file) {
 				continue
