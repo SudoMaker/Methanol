@@ -21,7 +21,7 @@
 import { existsSync } from 'fs'
 import { mkdir, writeFile } from 'fs/promises'
 import { resolve } from 'path'
-import { parse as parseHtml, serialize as serializeHtml } from 'parse5'
+import { Parser } from 'htmlparser2'
 import { state } from '../state.js'
 import { resolveBasePrefix } from '../config.js'
 import {
@@ -30,11 +30,7 @@ import {
 	isExternalUrl,
 	resolveManifestKey,
 	joinBasePrefix,
-	stripBasePrefix,
-	getAttr,
-	setAttr,
-	getTextContent,
-	walkNodes
+	stripBasePrefix
 } from './utils.js'
 
 let inlineReady = false
@@ -65,23 +61,86 @@ const applyPatches = (html, patches = []) => {
 	return out
 }
 
+const escapeAttr = (value) =>
+	String(value ?? '')
+		.replace(/&/g, '&amp;')
+		.replace(/"/g, '&quot;')
+
+const serializeAttrs = (attrs = {}) => {
+	const entries = Object.entries(attrs)
+		.filter(([name, value]) => name && value != null)
+		.map(([name, value]) => {
+			if (value === '') return name
+			return `${name}="${escapeAttr(value)}"`
+		})
+	return entries.length ? ` ${entries.join(' ')}` : ''
+}
+
+const serializeTag = (tag, attrs = {}, { closeTag = false } = {}) => {
+	const attrText = serializeAttrs(attrs)
+	if (closeTag) {
+		return `<${tag}${attrText}></${tag}>`
+	}
+	return `<${tag}${attrText}>`
+}
+
 const rewriteInlineScripts = async (html, routePath) => {
 	const basePrefix = resolveBasePrefix()
 	const inlineDir = resolve(resolveMethanolDir(), 'inline')
 	const patches = []
-	const document = parseHtml(html, { sourceCodeLocationInfo: true })
+	const inlineScripts = []
+	let current = null
+	const resolveTagEnd = (index) => {
+		if (typeof index !== 'number') return index
+		if (html[index] === '>') return index + 1
+		const next = html.indexOf('>', index)
+		return next >= 0 ? next + 1 : index + 1
+	}
 
-	await walkNodes(document, async (node) => {
-		if (!node.tagName) return
-		const tag = node.tagName.toLowerCase()
-		if (tag !== 'script') return
-		const type = (getAttr(node, 'type') || '').toLowerCase()
-		if (type !== 'module') return
-		const src = getAttr(node, 'src')
-		if (src) return
-		const loc = node.sourceCodeLocation
-		if (!loc || typeof loc.startOffset !== 'number' || typeof loc.endOffset !== 'number') return
-		const content = getTextContent(node) || ''
+	const parser = new Parser(
+		{
+			onopentag(name, attrs) {
+				if (name !== 'script') return
+				const type = (attrs?.type || '').toLowerCase()
+				const src = attrs?.src
+				if (type !== 'module' || src) {
+					current = null
+					return
+				}
+				current = {
+					start: parser.startIndex,
+					end: null,
+					content: ''
+				}
+			},
+			ontext(text) {
+				if (current) {
+					current.content += text
+				}
+			},
+			onclosetag(name) {
+				if (name !== 'script' || !current) return
+				current.end = resolveTagEnd(parser.endIndex)
+				inlineScripts.push(current)
+				current = null
+			}
+		},
+		{
+			decodeEntities: false,
+			lowerCaseTags: true,
+			lowerCaseAttributeNames: true
+		}
+	)
+
+	parser.write(html)
+	parser.end()
+
+	if (!inlineScripts.length) {
+		return { html, changed: false }
+	}
+
+	for (const entry of inlineScripts) {
+		const content = entry.content || ''
 		const hash = hashMd5(content)
 		await ensureInlineDir()
 		const filename = `inline-${hash}.js`
@@ -90,8 +149,8 @@ const rewriteInlineScripts = async (html, routePath) => {
 		const publicPath = `/.methanol/inline/${filename}`
 		const srcAttr = `src="${joinBasePrefix(basePrefix, publicPath)}"`
 		const replacement = `<script type="module" ${srcAttr}></script>`
-		patches.push({ start: loc.startOffset, end: loc.endOffset, text: replacement })
-	})
+		patches.push({ start: entry.start, end: entry.end, text: replacement })
+	}
 
 	if (!patches.length) {
 		return { html, changed: false }
@@ -105,6 +164,12 @@ const buildRewritePlan = async (html, routePath) => {
 	const scripts = new Set()
 	const styles = new Set()
 	const assets = new Set()
+	const resolveTagEnd = (index) => {
+		if (typeof index !== 'number') return index
+		if (html[index] === '>') return index + 1
+		const next = html.indexOf('>', index)
+		return next >= 0 ? next + 1 : index + 1
+	}
 	const plan = {
 		headEndOffset: null,
 		scripts: [],
@@ -134,92 +199,110 @@ const buildRewritePlan = async (html, routePath) => {
 		assets.add(resolvedPath)
 	}
 
-	const document = parseHtml(html, { sourceCodeLocationInfo: true })
-	await walkNodes(document, (node) => {
-		if (!node.tagName) return
-		const tag = node.tagName.toLowerCase()
-		if (tag === 'head' && node.sourceCodeLocation?.endTag?.startOffset != null) {
-			plan.headEndOffset = node.sourceCodeLocation.endTag.startOffset
-			return
-		}
-		if (tag === 'script') {
-			const type = (getAttr(node, 'type') || '').toLowerCase()
-			if (type !== 'module') return
-			const src = getAttr(node, 'src')
-			if (!src) return
-			const attrLoc = node.sourceCodeLocation?.attrs?.src
-			const nodeLoc = node.sourceCodeLocation
-			if (!attrLoc || nodeLoc?.startOffset == null || nodeLoc?.endOffset == null) return
-			const resolved = resolveManifestKey(src, basePrefix, routePath)
-			if (resolved?.resolvedPath) scripts.add(resolved.resolvedPath)
-			plan.scripts.push({
-				src,
-				attr: { name: 'src', start: attrLoc.startOffset, end: attrLoc.endOffset },
-				node: { start: nodeLoc.startOffset, end: nodeLoc.endOffset }
-			})
-			return
-		}
-		if (tag === 'link') {
-			const rel = (getAttr(node, 'rel') || '').toLowerCase()
-			const href = getAttr(node, 'href')
-			const attrLoc = node.sourceCodeLocation?.attrs?.href
-			if (rel.includes('stylesheet')) {
-				if (href && attrLoc) {
-					const resolved = resolveManifestKey(href, basePrefix, routePath)
-					if (resolved?.resolvedPath && !isStaticPath(resolved.resolvedPath)) {
-						styles.add(resolved.resolvedPath)
-					} else {
+	const scriptStack = []
+	const parser = new Parser(
+		{
+			onopentag(name, attrs) {
+				const tag = name?.toLowerCase?.() || name
+				const start = parser.startIndex
+				const end = resolveTagEnd(parser.endIndex)
+
+				if (tag === 'script') {
+					const type = (attrs?.type || '').toLowerCase()
+					const src = attrs?.src
+					const resolved = type === 'module' && src
+						? resolveManifestKey(src, basePrefix, routePath)
+						: null
+					const entry = {
+						tag,
+						attrs: { ...(attrs || {}) },
+						src,
+						start,
+						end,
+						resolvedPath: resolved?.resolvedPath || null,
+						manifestKey: resolved?.key || null
+					}
+					scriptStack.push(entry)
+					if (entry.resolvedPath) {
+						scripts.add(entry.resolvedPath)
+					}
+					return
+				}
+
+				if (tag === 'link') {
+					const rel = (attrs?.rel || '').toLowerCase()
+					const href = attrs?.href
+					if (rel.includes('stylesheet')) {
+						const resolved = href ? resolveManifestKey(href, basePrefix, routePath) : null
+						if (resolved?.resolvedPath && !isStaticPath(resolved.resolvedPath)) {
+							styles.add(resolved.resolvedPath)
+							plan.styles.push({
+								tag,
+								attrs: { ...(attrs || {}) },
+								href,
+								start,
+								end,
+								resolvedPath: resolved.resolvedPath,
+								manifestKey: resolved.key
+							})
+						}
 						return
 					}
-					plan.styles.push({
-						href,
-						attr: { name: 'href', start: attrLoc.startOffset, end: attrLoc.endOffset }
-					})
+					if (rel.includes('icon') || rel.includes('apple-touch-icon')) {
+						if (href) {
+							addAsset(href)
+							plan.icons.push({
+								tag,
+								attrs: { ...(attrs || {}) },
+								href,
+								start,
+								end
+							})
+						}
+					}
+					return
 				}
-				return
-			}
-			if (rel.includes('icon') || rel.includes('apple-touch-icon')) {
-				if (href && attrLoc) {
-					addAsset(href)
-					plan.icons.push({
-						href,
-						attr: { name: 'href', start: attrLoc.startOffset, end: attrLoc.endOffset }
-					})
+
+				if (tag === 'img' || tag === 'source' || tag === 'video' || tag === 'audio') {
+					const entry = {
+						tag,
+						attrs: { ...(attrs || {}) },
+						start,
+						end
+					}
+					const src = attrs?.src
+					if (src) addAsset(src)
+					const poster = attrs?.poster
+					if (poster) addAsset(poster)
+					const srcset = attrs?.srcset
+					if (srcset) {
+						for (const item of parseSrcset(srcset)) {
+							addAsset(item.url)
+						}
+					}
+					if (src || poster || srcset) {
+						plan.media.push(entry)
+					}
 				}
+			},
+			onclosetag(name) {
+				const tag = name?.toLowerCase?.() || name
+				if (tag !== 'script') return
+				const entry = scriptStack.pop()
+				if (!entry || !entry.resolvedPath) return
+				entry.end = resolveTagEnd(parser.endIndex)
+				plan.scripts.push(entry)
 			}
-			return
+		},
+		{
+			decodeEntities: false,
+			lowerCaseTags: true,
+			lowerCaseAttributeNames: true
 		}
-		if (tag === 'img' || tag === 'source' || tag === 'video' || tag === 'audio') {
-			const attrs = node.sourceCodeLocation?.attrs || {}
-			const entry = { src: null, poster: null, srcset: null }
-			const src = getAttr(node, 'src')
-			if (src && attrs.src) {
-				addAsset(src)
-				entry.src = { value: src, attr: { name: 'src', start: attrs.src.startOffset, end: attrs.src.endOffset } }
-			}
-			const poster = getAttr(node, 'poster')
-			if (poster && attrs.poster) {
-				addAsset(poster)
-				entry.poster = {
-					value: poster,
-					attr: { name: 'poster', start: attrs.poster.startOffset, end: attrs.poster.endOffset }
-				}
-			}
-			const srcset = getAttr(node, 'srcset')
-			if (srcset && attrs.srcset) {
-				for (const item of parseSrcset(srcset)) {
-					addAsset(item.url)
-				}
-				entry.srcset = {
-					value: srcset,
-					attr: { name: 'srcset', start: attrs.srcset.startOffset, end: attrs.srcset.endOffset }
-				}
-			}
-			if (entry.src || entry.poster || entry.srcset) {
-				plan.media.push(entry)
-			}
-		}
-	})
+	)
+
+	parser.write(html)
+	parser.end()
 
 	return {
 		plan,
@@ -272,9 +355,9 @@ export const rewriteHtmlByPlan = (
 		holes.push({ start, end, text })
 	}
 
-	const patchAttr = (attr, value) => {
-		if (!attr || !attr.name) return
-		addHole(attr.start, attr.end, `${attr.name}="${value}"`)
+	const replaceTag = (entry, tag, attrs, { closeTag = false } = {}) => {
+		if (!entry || typeof entry.start !== 'number' || typeof entry.end !== 'number') return
+		addHole(entry.start, entry.end, serializeTag(tag, attrs, { closeTag }))
 	}
 
 	const resolveAssetValue = (rawValue) => {
@@ -291,35 +374,36 @@ export const rewriteHtmlByPlan = (
 	}
 
 	for (const entry of plan.scripts || []) {
-		const src = entry?.src
-		const attr = entry?.attr
-		const node = entry?.node
-		if (!src || !attr) continue
+		const src = entry?.src || entry?.attrs?.src
+		if (!src) continue
 		const resolved = resolveManifestKey(src, basePrefix, routePath)
 		const publicPath = resolved?.resolvedPath
 		if (!publicPath) continue
+		const attrs = { ...(entry.attrs || {}) }
 		if (commonScripts.has(publicPath)) {
 			if (!commonEntry?.file) {
 				continue
 			}
 			if (!commonInserted) {
 				const newSrc = joinBasePrefix(basePrefix, commonEntry.file) + splitUrlParts(src).suffix
-				patchAttr(attr, newSrc)
+				attrs.src = newSrc
+				replaceTag(entry, 'script', attrs, { closeTag: true })
 				commonInserted = true
 				if (Array.isArray(commonEntry.css)) {
 					for (const css of commonEntry.css) {
 						cssFiles.add(css)
 					}
 				}
-			} else if (node) {
-				addHole(node.start, node.end, '')
+			} else {
+				addHole(entry.start, entry.end, '')
 			}
 			continue
 		}
 		const entryInfo = scriptMap.get(publicPath)
 		if (!entryInfo?.file) continue
 		const newSrc = joinBasePrefix(basePrefix, entryInfo.file) + splitUrlParts(src).suffix
-		patchAttr(attr, newSrc)
+		attrs.src = newSrc
+		replaceTag(entry, 'script', attrs, { closeTag: true })
 		if (Array.isArray(entryInfo.css)) {
 			for (const css of entryInfo.css) {
 				cssFiles.add(css)
@@ -328,19 +412,20 @@ export const rewriteHtmlByPlan = (
 	}
 
 	for (const entry of plan.styles || []) {
-		const href = entry?.href
-		const attr = entry?.attr
-		if (!href || !attr) continue
+		const href = entry?.href || entry?.attrs?.href
+		if (!href) continue
 		const resolved = resolveManifestKey(href, basePrefix, routePath)
 		const publicPath = resolved?.resolvedPath
 		if (!publicPath) continue
+		const attrs = { ...(entry.attrs || {}) }
 		const entryInfo = styleMap.get(publicPath)
 		if (!entryInfo?.file) {
 			const manifestEntry = resolveManifestEntry(manifest, resolved.key)
 			const cssFile = manifestEntry?.css?.[0] || (manifestEntry?.file?.endsWith('.css') ? manifestEntry.file : null)
 			if (cssFile) {
 				const newHref = joinBasePrefix(basePrefix, cssFile) + splitUrlParts(href).suffix
-				patchAttr(attr, newHref)
+				attrs.href = newHref
+				replaceTag(entry, 'link', attrs)
 				linkedHrefs.add(newHref)
 				if (Array.isArray(manifestEntry?.css) && manifestEntry.css.length > 1) {
 					for (const css of manifestEntry.css.slice(1)) {
@@ -353,7 +438,8 @@ export const rewriteHtmlByPlan = (
 				const [fallbackCss] = Array.from(cssFiles)
 				if (fallbackCss) {
 					const newHref = joinBasePrefix(basePrefix, fallbackCss) + splitUrlParts(href).suffix
-					patchAttr(attr, newHref)
+					attrs.href = newHref
+					replaceTag(entry, 'link', attrs)
 					linkedHrefs.add(newHref)
 					continue
 				}
@@ -362,7 +448,8 @@ export const rewriteHtmlByPlan = (
 			continue
 		}
 		const newHref = joinBasePrefix(basePrefix, entryInfo.file) + splitUrlParts(href).suffix
-		patchAttr(attr, newHref)
+		attrs.href = newHref
+		replaceTag(entry, 'link', attrs)
 		linkedHrefs.add(newHref)
 		if (Array.isArray(entryInfo.css)) {
 			for (const css of entryInfo.css) {
@@ -372,12 +459,13 @@ export const rewriteHtmlByPlan = (
 	}
 
 	for (const entry of plan.icons || []) {
-		const href = entry?.href
-		const attr = entry?.attr
-		if (!href || !attr) continue
+		const href = entry?.href || entry?.attrs?.href
+		if (!href) continue
 		const updated = resolveAssetValue(href)
 		if (!updated) continue
-		patchAttr(attr, updated)
+		const attrs = { ...(entry.attrs || {}) }
+		attrs.href = updated
+		replaceTag(entry, 'link', attrs)
 	}
 
 	const parseSrcset = (value = '') =>
@@ -391,21 +479,27 @@ export const rewriteHtmlByPlan = (
 			})
 
 	for (const entry of plan.media || []) {
-		const src = entry?.src
-		if (src?.value && src?.attr) {
-			const updated = resolveAssetValue(src.value)
-			if (updated) patchAttr(src.attr, updated)
+		if (!entry?.attrs) continue
+		const attrs = { ...(entry.attrs || {}) }
+		let touched = false
+		if (attrs.src) {
+			const updated = resolveAssetValue(attrs.src)
+			if (updated) {
+				attrs.src = updated
+				touched = true
+			}
 		}
-		const poster = entry?.poster
-		if (poster?.value && poster?.attr) {
-			const updated = resolveAssetValue(poster.value)
-			if (updated) patchAttr(poster.attr, updated)
+		if (attrs.poster) {
+			const updated = resolveAssetValue(attrs.poster)
+			if (updated) {
+				attrs.poster = updated
+				touched = true
+			}
 		}
-		const srcset = entry?.srcset
-		if (srcset?.value && srcset?.attr) {
+		if (attrs.srcset) {
 			const updated = []
-			let touched = false
-			for (const item of parseSrcset(srcset.value)) {
+			let changed = false
+			for (const item of parseSrcset(attrs.srcset)) {
 				if (!item.url || isExternalUrl(item.url)) {
 					updated.push([item.url, item.descriptor].filter(Boolean).join(' '))
 					continue
@@ -422,11 +516,15 @@ export const rewriteHtmlByPlan = (
 				}
 				const rewritten = joinBasePrefix(basePrefix, manifestEntry.file) + splitUrlParts(item.url).suffix
 				updated.push([rewritten, item.descriptor].filter(Boolean).join(' '))
+				changed = true
+			}
+			if (changed) {
+				attrs.srcset = updated.join(', ')
 				touched = true
 			}
-			if (touched) {
-				patchAttr(srcset.attr, updated.join(', '))
-			}
+		}
+		if (touched) {
+			replaceTag(entry, entry.tag || 'img', attrs)
 		}
 	}
 
@@ -465,188 +563,6 @@ export const rewriteHtmlByPlan = (
 	return String.raw({ raw: chunks }, ...fills)
 }
 
-export const rewriteHtmlDocument = (
-	document,
-	routePath,
-	basePrefix,
-	manifest,
-	scriptMap,
-	styleMap,
-	commonScripts,
-	commonEntry
-) => {
-	const cssFiles = new Set()
-	let commonInserted = false
-	const parseSrcset = (value = '') =>
-		value
-			.split(',')
-			.map((entry) => entry.trim())
-			.filter(Boolean)
-			.map((entry) => {
-				const [url, ...rest] = entry.split(/\s+/)
-				return { url, descriptor: rest.join(' ') }
-			})
-
-	const walk = (node, visitor) => {
-		if (!node.childNodes) return
-		const nextChildren = []
-		for (const child of node.childNodes) {
-			const action = visitor(child, node)
-			if (action !== 'remove') {
-				walk(child, visitor)
-				nextChildren.push(child)
-			}
-		}
-		node.childNodes = nextChildren
-	}
-
-	const updateAttr = (node, key) => {
-		const value = getAttr(node, key)
-		if (!value || isExternalUrl(value)) return
-		const { path, suffix } = splitUrlParts(value)
-		const resolved = resolveManifestKey(path, basePrefix, routePath)
-		if (!resolved?.key) return
-		const manifestEntry = resolveManifestEntry(manifest, resolved.key)
-		if (!manifestEntry?.file) return
-		setAttr(node, key, joinBasePrefix(basePrefix, manifestEntry.file) + suffix)
-	}
-
-	const updateSrcset = (node) => {
-		const srcset = getAttr(node, 'srcset')
-		if (!srcset) return
-		const entries = parseSrcset(srcset).map((item) => {
-			const { path, suffix } = splitUrlParts(item.url || '')
-			const resolved = resolveManifestKey(path, basePrefix, routePath)
-			if (!resolved?.key) return item
-			const manifestEntry = resolveManifestEntry(manifest, resolved.key)
-			if (!manifestEntry?.file) return item
-			return {
-				url: joinBasePrefix(basePrefix, manifestEntry.file) + suffix,
-				descriptor: item.descriptor
-			}
-		})
-		const merged = entries.map((item) => [item.url, item.descriptor].filter(Boolean).join(' '))
-		setAttr(node, 'srcset', merged.join(', '))
-	}
-
-	walk(document, (node) => {
-		if (!node.tagName) return
-		const tag = node.tagName.toLowerCase()
-		if (tag === 'script') {
-			const type = (getAttr(node, 'type') || '').toLowerCase()
-			const src = getAttr(node, 'src')
-			if (type === 'module' && src) {
-				const resolved = resolveManifestKey(src, basePrefix, routePath)
-				if (!resolved?.resolvedPath) return
-				if (commonScripts.has(resolved.resolvedPath)) {
-					if (!commonEntry?.file) return
-					if (!commonInserted) {
-						setAttr(node, 'src', joinBasePrefix(basePrefix, commonEntry.file) + splitUrlParts(src).suffix)
-						commonInserted = true
-						if (Array.isArray(commonEntry.css)) {
-							for (const css of commonEntry.css) {
-								cssFiles.add(css)
-							}
-						}
-						return
-					}
-					return 'remove'
-				}
-				const entryInfo = scriptMap.get(resolved.resolvedPath)
-				if (!entryInfo?.file) return
-				setAttr(node, 'src', joinBasePrefix(basePrefix, entryInfo.file) + splitUrlParts(src).suffix)
-				if (Array.isArray(entryInfo.css)) {
-					for (const css of entryInfo.css) {
-						cssFiles.add(css)
-					}
-				}
-			}
-			return
-		}
-
-		if (tag === 'link') {
-			const rel = (getAttr(node, 'rel') || '').toLowerCase()
-			if (rel.includes('stylesheet')) {
-				const href = getAttr(node, 'href')
-				const resolved = resolveManifestKey(href, basePrefix, routePath)
-				if (!resolved?.resolvedPath) return
-				if (isStaticPath(resolved.resolvedPath)) return
-				const entryInfo = styleMap.get(resolved.resolvedPath)
-				if (!entryInfo?.file) {
-					const manifestEntry = resolveManifestEntry(manifest, resolved.key)
-					const cssFile = manifestEntry?.css?.[0] || (manifestEntry?.file?.endsWith('.css') ? manifestEntry.file : null)
-					if (!cssFile) {
-						if (cssFiles.size) {
-							const [fallbackCss] = Array.from(cssFiles)
-							if (fallbackCss) {
-								setAttr(node, 'href', joinBasePrefix(basePrefix, fallbackCss) + splitUrlParts(href).suffix)
-							}
-						}
-						return
-					}
-					setAttr(node, 'href', joinBasePrefix(basePrefix, cssFile) + splitUrlParts(href).suffix)
-					if (Array.isArray(manifestEntry?.css) && manifestEntry.css.length > 1) {
-						for (const css of manifestEntry.css.slice(1)) {
-							cssFiles.add(css)
-						}
-					}
-					return
-				}
-				setAttr(node, 'href', joinBasePrefix(basePrefix, entryInfo.file) + splitUrlParts(href).suffix)
-				if (Array.isArray(entryInfo.css)) {
-					for (const css of entryInfo.css) {
-						cssFiles.add(css)
-					}
-				}
-				return
-			}
-			if (rel.includes('icon') || rel.includes('apple-touch-icon')) {
-				updateAttr(node, 'href')
-			}
-			return
-		}
-
-		if (tag === 'img' || tag === 'source' || tag === 'video' || tag === 'audio') {
-			updateAttr(node, 'src')
-			updateAttr(node, 'poster')
-			updateSrcset(node)
-		}
-	})
-
-	if (cssFiles.size) {
-		let headNode = null
-		walk(document, (node) => {
-			if (headNode || !node.tagName) return
-			if (node.tagName.toLowerCase() === 'head') {
-				headNode = node
-			}
-		})
-		if (headNode) {
-			const existing = new Set()
-			for (const child of headNode.childNodes || []) {
-				if (!child.tagName || child.tagName.toLowerCase() !== 'link') continue
-				const href = getAttr(child, 'href')
-				if (href) existing.add(href)
-			}
-			for (const css of Array.from(cssFiles)) {
-				const href = joinBasePrefix(basePrefix, css)
-				if (existing.has(href)) continue
-				headNode.childNodes.push({
-					nodeName: 'link',
-					tagName: 'link',
-					attrs: [
-						{ name: 'rel', value: 'stylesheet' },
-						{ name: 'href', value: href }
-					],
-					childNodes: []
-				})
-			}
-		}
-	}
-
-	return serializeHtml(document)
-}
-
 export const rewriteHtmlContent = (
 	html,
 	plan,
@@ -658,22 +574,10 @@ export const rewriteHtmlContent = (
 	commonScripts,
 	commonEntry
 ) => {
-	if (plan) {
-		return rewriteHtmlByPlan(
-			html,
-			plan,
-			routePath,
-			basePrefix,
-			manifest,
-			scriptMap,
-			styleMap,
-			commonScripts,
-			commonEntry
-		)
-	}
-	const document = parseHtml(html)
-	return rewriteHtmlDocument(
-		document,
+	if (!plan) return html
+	return rewriteHtmlByPlan(
+		html,
+		plan,
 		routePath,
 		basePrefix,
 		manifest,

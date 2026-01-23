@@ -212,6 +212,7 @@ const handleRender = async (message) => {
 			if (cacheHtml) {
 				renderedHtmlCache.set(id, html)
 			}
+			page.mdxComponent = null
 			parentPort?.postMessage({ type: 'result', stage, result: { id, html, feedContent } })
 		} catch (error) {
 			logPageError('MDX render', page, error)
