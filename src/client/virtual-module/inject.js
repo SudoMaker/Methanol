@@ -21,9 +21,9 @@
 import { createDOMRenderer } from 'refui/dom'
 import { defaults } from 'refui/browser'
 import { lazy } from 'refui'
-import { init } from './loader.js'
+import { init } from 'methanol:loader'
 import { registry } from 'methanol:registry'
-import './pwa-inject.js'
+import 'methanol:pwa-inject'
 
 const R = createDOMRenderer(defaults)
 
