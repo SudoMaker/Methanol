@@ -147,7 +147,7 @@ const resolveSiteHeadAssets = (ctx) => {
 		)
 	}
 	const pwa = site.pwa
-	if (pwa?.enabled && pwa.manifestHref) {
+	if (state.CURRENT_MODE === 'production' && pwa?.enabled && pwa.manifestHref) {
 		assets.push(HTMLRenderer.c('link', { rel: 'manifest', href: pwa.manifestHref }))
 	}
 	if (state.CURRENT_MODE === 'production') {

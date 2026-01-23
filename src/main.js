@@ -28,9 +28,11 @@ import { generateRssFeed } from './feed.js'
 import { runVitePreview } from './preview-server.js'
 import { cli, state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
-import { readFile } from 'fs/promises'
+import { readFile, rm, mkdir, copyFile, cp } from 'fs/promises'
+import { resolve, dirname } from 'path'
 import { style, logger } from './logger.js'
 import { createStageLogger } from './stage-logger.js'
+import { preparePublicAssets } from './public-assets.js'
 
 const printBanner = async () => {
 	try {
@@ -129,6 +131,12 @@ const main = async () => {
 			assignments
 		} = await buildHtmlEntries({ keepWorkers: true })
 		const scanResult = await scanHtmlEntries(htmlEntries, renderScans)
+		const hasEntryModules = Array.isArray(scanResult.entryModules) && scanResult.entryModules.length > 0
+		const hasCommonScripts = Array.isArray(scanResult.commonScripts) && scanResult.commonScripts.length > 0
+		const hasCommonEntry = Boolean(scanResult.commonScriptEntry)
+		const hasAssetsEntry = Boolean(scanResult.assetsEntryPath)
+		const hasStaticHtmlInputs = htmlEntries.some((entry) => entry?.source === 'static' && entry.inputPath)
+		const shouldBundle = state.PWA_ENABLED || hasEntryModules || hasCommonScripts || hasCommonEntry || hasAssetsEntry || hasStaticHtmlInputs
 		const buildContext = pagesContext
 			? {
 					pagesContext,
@@ -143,29 +151,59 @@ const main = async () => {
 
 		let finalizeToken = null
 		try {
-			await runViteBuild({
-				...scanResult,
-				htmlEntries,
-				preWrite: async () => {
-					await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
-					await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
-					await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
-					await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
-				},
-				postWrite: async () => {
-					await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
-					await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
-					finalizeToken = stageLogger.start('Finalizing build')
-				},
-				rewrite: {
-					pages: pagesContext?.pagesAll || pagesContext?.pages || [],
-					htmlStageDir,
-					scanResult,
-					renderScansById,
-					workers,
-					assignments
+			if (shouldBundle) {
+				await runViteBuild({
+					...scanResult,
+					htmlEntries,
+					preWrite: async () => {
+						await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
+						await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
+						await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
+						await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
+					},
+					postWrite: async () => {
+						await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
+						await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
+						finalizeToken = stageLogger.start('Finalizing build')
+					},
+					rewrite: {
+						pages: pagesContext?.pagesAll || pagesContext?.pages || [],
+						htmlStageDir,
+						scanResult,
+						renderScansById,
+						workers,
+						assignments
+					}
+				})
+			} else {
+				await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
+				await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
+				await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
+				await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
+				if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
+					await preparePublicAssets({
+						themeDir: state.THEME_ASSETS_DIR,
+						userDir: state.USER_ASSETS_DIR,
+						targetDir: state.MERGED_ASSETS_DIR
+					})
 				}
-			})
+				await rm(state.DIST_DIR, { recursive: true, force: true })
+				await mkdir(state.DIST_DIR, { recursive: true })
+				if (state.STATIC_DIR !== false && state.STATIC_DIR) {
+					await cp(state.STATIC_DIR, state.DIST_DIR, { recursive: true, dereference: true })
+				}
+				for (const entry of htmlEntries) {
+					const name = entry?.name
+					const stagePath = entry?.stagePath || entry?.inputPath
+					if (!name || !stagePath) continue
+					const distPath = resolve(state.DIST_DIR, `${name}.html`)
+					await mkdir(dirname(distPath), { recursive: true })
+					await copyFile(stagePath, distPath)
+				}
+				await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
+				await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
+				finalizeToken = stageLogger.start('Finalizing build')
+			}
 		} finally {
 			if (workers) {
 				await terminateWorkers(workers)

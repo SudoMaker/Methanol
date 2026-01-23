@@ -137,7 +137,7 @@ const virtualModuleMap = {
 		return PAGEFIND_LOADER_SCRIPT()
 	},
 	get 'pwa-inject'() {
-		if (state.PWA_ENABLED) {
+		if (state.PWA_ENABLED && state.CURRENT_MODE === 'production') {
 			return PWA_INJECT_SCRIPT()
 		}
 
