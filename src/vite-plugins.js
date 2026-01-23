@@ -145,7 +145,7 @@ const virtualModuleMap = {
 	},
 	get pages() {
 		const pages = state.PAGES_CONTEXT?.pages || []
-		return `export const pages = ${serializePagesIndex(pages)}\nexport default pages`
+		return `export const pages = JSON.parse(${serializePagesIndex(pages)})\nexport default pages`
 	}
 }
 

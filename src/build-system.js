@@ -53,6 +53,7 @@ const ensureSwEntry = async () => {
 
 const INLINE_DIR = 'inline'
 const ENTRY_DIR = 'entries'
+const WRITE_CONCURRENCY_LIMIT = 32
 
 const resolveMethanolDir = () => resolve(state.PAGES_DIR, '.methanol')
 
@@ -92,7 +93,7 @@ const makeInputKey = (prefix, value) => `${prefix}-${hashKey(value).slice(0, 12)
 export const buildHtmlEntries = async (options = {}) => {
 	const keepWorkers = Boolean(options.keepWorkers)
 	await resolveUserViteConfig('build') // Prepare `base`
-	const htmlStageDir = state.INTERMEDIATE_DIR
+	const htmlStageDir = state.INTERMEDIATE_DIR || resolve(state.PAGES_DIR, '.methanol/html')
 	if (htmlStageDir) {
 		await rm(htmlStageDir, { recursive: true, force: true })
 		await ensureDir(htmlStageDir)
@@ -112,7 +113,6 @@ export const buildHtmlEntries = async (options = {}) => {
 	const pagesContext = await buildPagesContext({ compileAll: false })
 	const htmlEntries = []
 	const htmlEntryNames = new Set()
-	const htmlWrites = []
 	const inlineDir = resolve(resolveMethanolDir(), INLINE_DIR)
 	await rm(inlineDir, { recursive: true, force: true })
 	await ensureDir(inlineDir)
@@ -129,6 +129,7 @@ export const buildHtmlEntries = async (options = {}) => {
 	const pages = pagesContext.pagesAll || pagesContext.pages || []
 	const totalPages = pages.length
 	const { workers, assignments } = createBuildWorkers(totalPages)
+	const writeConcurrency = Math.max(1, Math.floor(WRITE_CONCURRENCY_LIMIT / workers.length))
 	const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
 	const excludedDirs = Array.from(pagesContext.excludedDirs || [])
 	const rssContent = new Map()
@@ -226,7 +227,8 @@ export const buildHtmlEntries = async (options = {}) => {
 					stage: 'render',
 					ids: assignments[index],
 					feedIds: feedAssignments ? feedAssignments[index] : [],
-					cacheHtml: !htmlStageDir
+					htmlStageDir,
+					writeConcurrency
 				}
 			})),
 			onProgress: (count) => {
@@ -238,19 +240,15 @@ export const buildHtmlEntries = async (options = {}) => {
 				if (!result || typeof result.id !== 'number') return
 				const page = pages[result.id]
 				if (!page) return
-				const html = result.html
+				if (result.scan) {
+					renderScansById.set(result.id, result.scan)
+				}
 				const name = resolveOutputName(page)
-				const outPath = htmlStageDir ? resolve(htmlStageDir, `${name}.html`) : `${name}.html`
+				const outPath = htmlStageDir
+					? (result.stagePath || resolve(htmlStageDir, `${name}.html`))
+					: `${name}.html`
 				htmlEntryNames.add(name)
 				htmlEntries.push({ name, routePath: page.routePath, stagePath: outPath, source: 'rendered' })
-				if (htmlStageDir) {
-					htmlWrites.push(
-						(async () => {
-							await ensureDir(dirname(outPath))
-							await writeFile(outPath, html)
-						})()
-					)
-				}
 				if (result.feedContent != null) {
 					const key = page.path || page.routePath
 					if (key) {
@@ -261,39 +259,13 @@ export const buildHtmlEntries = async (options = {}) => {
 		})
 		stageLogger.end(renderToken)
 
-		if (htmlWrites.length) {
-			await Promise.all(htmlWrites)
+		for (const [id, scan] of renderScansById.entries()) {
+			const page = pages[id]
+			if (!page || !scan) continue
+			const name = resolveOutputName(page)
+			const stagePath = htmlStageDir ? resolve(htmlStageDir, `${name}.html`) : `${name}.html`
+			renderScans.set(stagePath, scan)
 		}
-
-		const scanToken = stageLogger.start('Scanning HTML')
-		completed = 0
-		await runWorkerStage({
-			workers,
-			stage: 'scan',
-			messages: workers.map((worker, index) => ({
-				worker,
-				message: {
-					type: 'scan',
-					stage: 'scan',
-					ids: assignments[index],
-					htmlStageDir
-				}
-			})),
-			onProgress: (count) => {
-				if (!logEnabled) return
-				completed = count
-				stageLogger.update(scanToken, `Scanning HTML [${completed}/${totalPages}]`)
-			},
-			onResult: (result) => {
-				if (result?.stagePath && result?.scan) {
-					renderScans.set(result.stagePath, result.scan)
-				}
-				if (typeof result?.id === 'number' && result?.scan) {
-					renderScansById.set(result.id, result.scan)
-				}
-			}
-		})
-		stageLogger.end(scanToken)
 		completedRun = true
 	} finally {
 		if (!keepWorkers || !completedRun) {

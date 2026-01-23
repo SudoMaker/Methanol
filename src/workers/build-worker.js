@@ -32,7 +32,6 @@ let pagesContext = null
 let components = null
 let mdxPageIds = new Set()
 const parsedHtmlCache = new Map()
-const renderedHtmlCache = new Map()
 
 const ensureInit = async () => {
 	if (initPromise) return initPromise
@@ -114,7 +113,6 @@ const logPageError = (phase, page, error) => {
 	// console.error(error?.stack || error)
 }
 
-
 const handleSetPages = async (message) => {
 	const { pages: nextPages, excludedRoutes = [], excludedDirs = [] } = message || {}
 	pages = Array.isArray(nextPages) ? nextPages : []
@@ -178,11 +176,17 @@ const handleCompile = async (message) => {
 	return updates
 }
 
+const MAX_PENDING_WRITES = 32
+
 const handleRender = async (message) => {
-	const { ids = [], stage, feedIds = [] } = message || {}
-	const cacheHtml = Boolean(message?.cacheHtml)
+	const { ids = [], stage, feedIds = [], htmlStageDir = null, writeConcurrency = null } = message || {}
 	const { renderHtml, renderPageContent } = await import('../mdx.js')
 	const feedSet = new Set(Array.isArray(feedIds) ? feedIds : [])
+	const writeLimit =
+		typeof writeConcurrency === 'number' && Number.isFinite(writeConcurrency)
+			? Math.max(1, Math.floor(writeConcurrency))
+			: MAX_PENDING_WRITES
+	const pendingWrites = []
 	let completed = 0
 	for (const id of ids) {
 		const page = pages[id]
@@ -199,6 +203,8 @@ const handleRender = async (message) => {
 				pagesContext,
 				pageMeta: page
 			})
+			let outputHtml = html
+			let scan = null
 			let feedContent = null
 			if (feedSet.has(id)) {
 				feedContent = await renderPageContent({
@@ -209,17 +215,58 @@ const handleRender = async (message) => {
 					pageMeta: page
 				})
 			}
-			if (cacheHtml) {
-				renderedHtmlCache.set(id, html)
+			let stagePath = null
+			if (htmlStageDir) {
+				const scanned = await scanRenderedHtml(outputHtml, page.routePath)
+				outputHtml = scanned.html
+				scan = scanned.scan
+				const hasResources =
+					scan.scripts.length > 0 || scan.styles.length > 0 || scan.assets.length > 0
+				if (hasResources) {
+					parsedHtmlCache.set(id, scanned.plan)
+				}
+				const name = resolveOutputName(page)
+				stagePath = resolve(htmlStageDir, `${name}.html`)
+				pendingWrites.push(
+					(async () => {
+						await mkdir(dirname(stagePath), { recursive: true })
+						await writeFile(stagePath, outputHtml)
+					})()
+				)
+				if (pendingWrites.length >= writeLimit) {
+					const results = await Promise.allSettled(pendingWrites)
+					pendingWrites.length = 0
+					const failed = results.find((result) => result.status === 'rejected')
+					if (failed) {
+						throw failed.reason
+					}
+				}
 			}
 			page.mdxComponent = null
-			parentPort?.postMessage({ type: 'result', stage, result: { id, html, feedContent } })
+			parentPort?.postMessage({
+				type: 'result',
+				stage,
+				result: {
+					id,
+					html: htmlStageDir ? null : outputHtml,
+					stagePath,
+					feedContent,
+					scan
+				}
+			})
 		} catch (error) {
 			logPageError('MDX render', page, error)
 			throw error
 		}
 		completed += 1
 		parentPort?.postMessage({ type: 'progress', stage, completed })
+	}
+	if (pendingWrites.length) {
+		const results = await Promise.allSettled(pendingWrites)
+		const failed = results.find((result) => result.status === 'rejected')
+		if (failed) {
+			throw failed.reason
+		}
 	}
 }
 
@@ -230,56 +277,6 @@ const resolveOutputName = (page) => {
 		return join(page.dir, 'index').replace(/\\/g, '/')
 	}
 	return page.routePath.slice(1)
-}
-
-const handleScan = async (message) => {
-	const { ids = [], stage, htmlStageDir } = message || {}
-	const useMemoryStage = !htmlStageDir
-	let completed = 0
-	for (const id of ids) {
-		const page = pages[id]
-		if (!page) {
-			completed += 1
-			parentPort?.postMessage({ type: 'progress', stage, completed })
-			continue
-		}
-		try {
-			const name = resolveOutputName(page)
-			const stageKey = `${name}.html`
-			const stagePath = htmlStageDir ? resolve(htmlStageDir, stageKey) : stageKey
-			const html = useMemoryStage
-				? renderedHtmlCache.get(id)
-				: await readFile(stagePath, 'utf-8')
-			if (html == null) {
-				throw new Error('HTML content not available for scan')
-			}
-			const scanned = await scanRenderedHtml(html, page.routePath)
-			if (scanned.html !== html) {
-				if (useMemoryStage) {
-					renderedHtmlCache.set(id, scanned.html)
-				} else {
-					await writeFile(stagePath, scanned.html)
-				}
-			}
-			const hasResources =
-				scanned.scan.scripts.length > 0 || scanned.scan.styles.length > 0 || scanned.scan.assets.length > 0
-			if (hasResources) {
-				parsedHtmlCache.set(id, {
-					plan: scanned.plan || null
-				})
-			}
-			parentPort?.postMessage({
-				type: 'result',
-				stage,
-				result: { id, stagePath, scan: scanned.scan }
-			})
-		} catch (error) {
-			logPageError('HTML scan', page, error)
-			throw error
-		}
-		completed += 1
-		parentPort?.postMessage({ type: 'progress', stage, completed })
-	}
 }
 
 const handleRewrite = async (message) => {
@@ -313,7 +310,6 @@ const handleRewrite = async (message) => {
 		}
 	}
 	const commonSet = new Set(commonScripts || [])
-	const useMemoryStage = !htmlStageDir
 	let completed = 0
 	for (const id of ids) {
 		const page = pages[id]
@@ -330,25 +326,14 @@ const handleRewrite = async (message) => {
 			const scan = scans?.[id] || null
 			if (scan && Array.isArray(scan.scripts) && Array.isArray(scan.styles) && Array.isArray(scan.assets)) {
 				if (scan.scripts.length === 0 && scan.styles.length === 0 && scan.assets.length === 0) {
-					if (useMemoryStage) {
-						const html = renderedHtmlCache.get(id)
-						if (html == null) {
-							throw new Error('HTML content not available for rewrite')
-						}
-						await writeFile(distPath, html)
-					} else {
-						await copyFile(stagePath, distPath)
-					}
+					await copyFile(stagePath, distPath)
 					completed += 1
 					parentPort?.postMessage({ type: 'progress', stage, completed })
 					continue
 				}
 			}
-			const cached = parsedHtmlCache.get(id)
-			const plan = cached?.plan || null
-			const html = useMemoryStage
-				? renderedHtmlCache.get(id)
-				: await readFile(stagePath, 'utf-8')
+			const plan = parsedHtmlCache.get(id)
+			const html = await readFile(stagePath, 'utf-8')
 			if (html == null) {
 				throw new Error('HTML content not available for rewrite')
 			}
@@ -364,7 +349,6 @@ const handleRewrite = async (message) => {
 				commonEntry
 			)
 			parsedHtmlCache.delete(id)
-			renderedHtmlCache.delete(id)
 			await writeFile(distPath, output)
 			parentPort?.postMessage({ type: 'result', stage, result: { id } })
 		} catch (error) {
@@ -402,11 +386,6 @@ parentPort?.on('message', async (message) => {
 		}
 		if (type === 'render') {
 			await handleRender(message)
-			parentPort?.postMessage({ type: 'done', stage })
-			return
-		}
-		if (type === 'scan') {
-			await handleScan(message)
 			parentPort?.postMessage({ type: 'done', stage })
 			return
 		}

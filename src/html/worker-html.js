@@ -219,8 +219,8 @@ const buildRewritePlan = async (html, routePath) => {
 						src,
 						start,
 						end,
-						resolvedPath: resolved?.resolvedPath || null,
-						manifestKey: resolved?.key || null
+						resolvedPath: resolved?.resolvedPath,
+						manifestKey: resolved?.key
 					}
 					scriptStack.push(entry)
 					if (entry.resolvedPath) {
@@ -305,7 +305,9 @@ const buildRewritePlan = async (html, routePath) => {
 	parser.end()
 
 	return {
-		plan,
+		// V8 memory optimization: this blocks v8 from referencing string fragments
+		// from potentially big html strings, which could leaad to GBs of memory leak
+		plan: JSON.parse(JSON.stringify(plan)),
 		scan: {
 			scripts: Array.from(scripts),
 			styles: Array.from(styles),

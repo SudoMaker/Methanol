@@ -18,7 +18,6 @@
  * under the License.
  */
 
-import JSON5 from 'json5'
 import { extractExcerpt } from './text-utils.js'
 
 const OMIT_KEYS = new Set([
@@ -47,5 +46,5 @@ export const serializePagesIndex = (pages) => {
 	const list = Array.isArray(pages)
 		? pages.filter((page) => !page?.hidden).map(sanitizePage)
 		: []
-	return JSON5.stringify(list)
+	return JSON.stringify(JSON.stringify(list))
 }
