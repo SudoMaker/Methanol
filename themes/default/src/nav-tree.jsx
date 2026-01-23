@@ -45,74 +45,66 @@ const toSignal = (i) => {
 	return sig
 }
 
-const filterVisible = (items) => {
-	if (!Array.isArray(items)) return []
-	return items.filter(({ value: item }) => {
-		if (!item.hidden) {
-			return true
-		}
-
-		const _currentPath = currentPath.value
-		return _currentPath.startsWith(item.routePath)
-	})
-}
-
 const NavTree = ({ nodes, depth }) => {
-	const filtered = signal(nodes, filterVisible)
 	return (
-		<For entries={filtered}>
+		<For entries={nodes}>
 			{({ item }) => {
 				const node = read(item)
 				const { routeHref: href, routePath, type, name, isRoot } = node
-				const { title } = extract(item, 'title')
+				const { title, hidden } = extract(item, 'title', 'hidden')
 
 				const isActive = matchCurrentPath(routePath)
-
+				let show = isActive
 				if (type === 'directory') {
-					const label = title.or(name)
-					const { children } = extract(item, 'children')
-
-					const isOpen = $(() => {
-						if (depth < 1) {
-							return true
-						}
+					show = $(() => {
 						const _active = isActive.value
 						const _currentPath = currentPath.value
 						return _active || _currentPath.startsWith(routePath)
 					})
-
-					const header = href ? (
-						<a class={isActive.choose('nav-dir-link active', 'nav-dir-link')} href={href}>
-							{label}
-						</a>
-					) : (
-						<span class="nav-dir-label">{label}</span>
-					)
-
-					return (
-						<li class={isActive.choose('is-active', null)}>
-							<details class="sidebar-collapsible" open={isOpen.choose(true, null)}>
-								<summary class="sb-dir-header">{header}</summary>
-								<If condition={() => children.value.length}>
-									{() => (
-										<ul data-depth={depth + 1}>
-											<NavTree nodes={children} depth={depth + 1} />
-										</ul>
-									)}
-								</If>
-							</details>
-						</li>
-					)
-				} else {
-					const label = title.or(node.isIndex ? 'Home' : name)
-					return (
-						<li>
-							<a class={isActive.choose('active', null)} href={href}>
-								{label}
-							</a>
-						</li>
-					)
 				}
+
+				return (
+					<If condition={hidden.inverseOr(show)}>
+						{() => {
+							if (type === 'directory') {
+								const label = title.or(name)
+								const { children } = extract(item, 'children')
+
+								const header = href ? (
+									<a class={isActive.choose('nav-dir-link active', 'nav-dir-link')} href={href}>
+										{label}
+									</a>
+								) : (
+									<span class="nav-dir-label">{label}</span>
+								)
+
+								return (
+									<li class={isActive.choose('is-active', null)}>
+										<details class="sidebar-collapsible" open={depth < 1 || show.choose(true, null)}>
+											<summary class="sb-dir-header">{header}</summary>
+											<If condition={() => children.value.length}>
+												{() => (
+													<ul data-depth={depth + 1}>
+														<NavTree nodes={children} depth={depth + 1} />
+													</ul>
+												)}
+											</If>
+										</details>
+									</li>
+								)
+							} else {
+								const label = title.or(node.isIndex ? 'Home' : name)
+								return (
+									<li>
+										<a class={isActive.choose('active', null)} href={href}>
+											{label}
+										</a>
+									</li>
+								)
+							}
+						}}
+					</If>
+				)
 			}}
 		</For>
 	)
