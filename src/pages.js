@@ -695,6 +695,24 @@ const buildNavSequence = (nodes, pagesByRoute) => {
 
 export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDirs } = {}) => {
 	const pageList = Array.isArray(pages) ? pages : []
+	const hiddenPrefixes = []
+	for (const page of pageList) {
+		if (page.isIndex && page.hidden) {
+			const prefix = page.routePath.endsWith('/') ? page.routePath : `${page.routePath}/`
+			if (prefix !== '/') {
+				hiddenPrefixes.push(prefix)
+			}
+		}
+	}
+	for (const page of pageList) {
+		page.hiddenByParent = false
+		for (const prefix of hiddenPrefixes) {
+			if (page.routePath.startsWith(prefix) && page.routePath !== prefix) {
+				page.hiddenByParent = true
+				break
+			}
+		}
+	}
 	const pagesAll = pageList
 	const isSpecialPage = (page) => page?.routePath === '/404' || page?.routePath === '/offline'
 	const listForNavigation = pageList.filter(

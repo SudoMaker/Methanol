@@ -21,7 +21,7 @@
 import { extractExcerpt } from 'methanol'
 
 const isBlogPost = (page) => {
-	if (!page || page.hidden) return false
+	if (!page || page.hidden || page.hiddenByParent) return false
 	const href = page.routeHref
 	if (!href) return false
 	if (href === '/' || href === '/404' || href === '/offline') return false

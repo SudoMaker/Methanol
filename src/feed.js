@@ -111,7 +111,7 @@ export const selectFeedPages = (pages, options) => {
 	const limit = resolveFeedLimit(options)
 	if (!limit) return []
 	return (Array.isArray(pages) ? pages : [])
-		.filter((page) => page && !page.hidden)
+		.filter((page) => page && !page.hidden && !page.hiddenByParent)
 		.sort((a, b) => getSortTime(b) - getSortTime(a))
 		.slice(0, limit)
 }
