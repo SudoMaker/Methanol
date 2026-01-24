@@ -25,8 +25,6 @@ const MANIFEST_HASH = '__METHANOL_MANIFEST_HASH__'
 const DEFAULT_BATCH_SIZE = 5
 const REVISION_HEADER = 'X-Methanol-Revision'
 
-self.skipWaiting()
-
 const resolveBasePrefix = cached(() => normalizeBasePrefix(import.meta.env?.BASE_URL || '/'))
 
 const withBase = cachedStr((path) => {
@@ -126,6 +124,7 @@ async function getManifestIndex() {
 
 // Precache prioritized entries during install
 self.addEventListener('install', (event) => {
+	self.skipWaiting()
 	event.waitUntil(
 		(async () => {
 			try {
