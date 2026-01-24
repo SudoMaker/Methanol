@@ -526,7 +526,7 @@ export const buildPageEntry = async ({ path, pagesDir, source }) => {
 	const hidden =
 		frontmatterHidden === false
 			? false
-			: frontmatterHidden === true
+			: hiddenByFrontmatter
 				? true
 				: isSpecialPage
 					? true
@@ -706,10 +706,22 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 	}
 	for (const page of pageList) {
 		page.hiddenByParent = false
+		page.hiddenByParents = false
+		const normalizedRoute = normalizeRoutePath(page.routePath)
+		let parentPrefix = null
+		if (normalizedRoute !== '/') {
+			const stripped = stripTrailingSlash(normalizedRoute)
+			const index = stripped.lastIndexOf('/')
+			const parentPath = index <= 0 ? '/' : stripped.slice(0, index)
+			parentPrefix = normalizeRoutePath(`${parentPath}/`)
+		}
 		for (const prefix of hiddenPrefixes) {
-			if (page.routePath.startsWith(prefix) && page.routePath !== prefix) {
+			if (parentPrefix && prefix === parentPrefix) {
 				page.hiddenByParent = true
-				break
+			}
+			if (page.routePath.startsWith(prefix) && page.routePath !== prefix) {
+				page.hiddenByParents = true
+				if (page.hiddenByParent) break
 			}
 		}
 	}
@@ -869,10 +881,44 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 				index = sequence.findIndex((entry) => entry.routePath === routePath)
 			}
 			if (index < 0) return { prev: null, next: null }
+			const normalizedRoutePath = normalizeRoutePath(routePath)
+			const resolveHiddenRoot = (value) => {
+				if (!value) return null
+				const normalized = normalizeRoutePath(value)
+				let match = null
+				for (const prefix of hiddenPrefixes) {
+					if (normalized.startsWith(prefix)) {
+						if (!match || prefix.length > match.length) {
+							match = prefix
+						}
+					}
+				}
+				return match
+			}
+			const isUnderRoute = (routeValue, baseValue) => {
+				if (!routeValue || !baseValue) return false
+				const route = normalizeRoutePath(routeValue)
+				const base = normalizeRoutePath(baseValue)
+				if (stripTrailingSlash(route) === stripTrailingSlash(base)) return true
+				const basePrefix = base.endsWith('/') ? base : `${base}/`
+				return route.startsWith(basePrefix)
+			}
 			const isVisible = (entry) => {
 				if (!entry) return false
-				if (entry.isRoot === true && entry.hidden !== false) return false
-				return !entry.hidden
+				if (entry.isRoot) {
+					if (entry.hidden !== false || routePath.startsWith(entry.routePath)) {
+						return true
+					}
+					return false
+				}
+				if (entry.hidden) {
+					return isUnderRoute(normalizedRoutePath, entry.routePath)
+				}
+				const entryHiddenRoot = resolveHiddenRoot(entry.routePath)
+				if (entryHiddenRoot) {
+					return isUnderRoute(normalizedRoutePath, entryHiddenRoot)
+				}
+				return true
 			}
 			let prevIndex = index - 1
 			while (prevIndex >= 0 && !isVisible(sequence[prevIndex])) {

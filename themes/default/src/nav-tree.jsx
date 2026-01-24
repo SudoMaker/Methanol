@@ -18,7 +18,7 @@
  * under the License.
  */
 
-import { If, For, $, signal, onCondition, read, extract } from 'refui'
+import { If, For, $, signal, onCondition, read, extract, nextTick } from 'refui'
 import NullProtoObj from 'null-prototype-object'
 import { HTMLRenderer } from 'methanol'
 
@@ -50,21 +50,20 @@ const NavTree = ({ nodes, depth }) => {
 		<For entries={nodes}>
 			{({ item }) => {
 				const node = read(item)
-				const { routeHref: href, routePath, type, name, isRoot } = node
-				const { title, hidden } = extract(item, 'title', 'hidden')
+				const { routeHref: href, routePath, type, name, isRoot, hidden } = node
+				const { title } = extract(item, 'title')
 
 				const isActive = matchCurrentPath(routePath)
 				let show = isActive
-				if (type === 'directory') {
+				if (isRoot || type === 'directory') {
 					show = $(() => {
-						const _active = isActive.value
 						const _currentPath = currentPath.value
-						return _active || _currentPath.startsWith(routePath)
+						return _currentPath.startsWith(routePath)
 					})
 				}
 
 				return (
-					<If condition={hidden.inverseOr(show)}>
+					<If condition={!hidden || show}>
 						{() => {
 							if (type === 'directory') {
 								const label = title.or(name)
@@ -114,8 +113,9 @@ const _rootNodes = signal()
 const rootNodes = signal(_rootNodes, (nodes) => nodes?.map(toSignal))
 const rootTree = HTMLRenderer.createElement(NavTree, { nodes: rootNodes, depth: 0 })
 
-export const renderNavTree = (nodes, path) => {
+export const renderNavTree = async (nodes, path) => {
 	currentPath.value = path
 	_rootNodes.value = nodes
+	await nextTick()
 	return rootTree
 }

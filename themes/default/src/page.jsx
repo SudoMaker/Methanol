@@ -22,7 +22,7 @@ import { DOCTYPE_HTML } from 'methanol'
 import { renderToc } from '../components/ThemeToCContainer.static.jsx'
 import { renderNavTree } from './nav-tree.jsx'
 
-const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
+const PAGE_TEMPLATE = async ({ PageContent, ExtraHead, components, ctx }) => {
 	const page = ctx.page
 	const pagesByRoute = ctx.pagesByRoute
 	const pages = ctx.pages || []
@@ -204,7 +204,7 @@ const PAGE_TEMPLATE = ({ PageContent, ExtraHead, components, ctx }) => {
 								{pagefindEnabled ? <ThemeSearchBox options={pagefindOptions} /> : null}
 							</div>
 							<nav>
-								<ul data-depth="0">{renderNavTree(pagesTree, page.routePath)}</ul>
+								<ul data-depth="0">{await renderNavTree(pagesTree, page.routePath)}</ul>
 							</nav>
 							<div class="sidebar-footer">
 								{languageSelector}
