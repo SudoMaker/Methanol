@@ -360,7 +360,7 @@ const handleRewrite = async (message) => {
 	}
 }
 
-parentPort?.on('message', async (message) => {
+const handleMessage = async (message) => {
 	const { type, stage } = message || {}
 	try {
 		await ensureInit()
@@ -397,4 +397,13 @@ parentPort?.on('message', async (message) => {
 	} catch (error) {
 		parentPort?.postMessage({ type: 'error', stage, error: serializeError(error) })
 	}
+}
+
+let messageQueue = Promise.resolve()
+parentPort?.on('message', (message) => {
+	messageQueue = messageQueue
+		.then(() => handleMessage(message))
+		.catch((error) => {
+			parentPort?.postMessage({ type: 'error', stage: message?.stage, error: serializeError(error) })
+		})
 })

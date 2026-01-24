@@ -695,49 +695,48 @@ const buildNavSequence = (nodes, pagesByRoute) => {
 
 export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDirs } = {}) => {
 	const pageList = Array.isArray(pages) ? pages : []
-	const hiddenPrefixes = []
-	for (const page of pageList) {
-		if (page.isIndex && page.hidden) {
-			const prefix = page.routePath.endsWith('/') ? page.routePath : `${page.routePath}/`
-			if (prefix !== '/') {
-				hiddenPrefixes.push(prefix)
-			}
-		}
-	}
-	for (const page of pageList) {
-		page.hiddenByParent = false
-		page.hiddenByParents = false
-		const normalizedRoute = normalizeRoutePath(page.routePath)
-		let parentPrefix = null
-		if (normalizedRoute !== '/') {
-			const stripped = stripTrailingSlash(normalizedRoute)
-			const index = stripped.lastIndexOf('/')
-			const parentPath = index <= 0 ? '/' : stripped.slice(0, index)
-			parentPrefix = normalizeRoutePath(`${parentPath}/`)
-		}
-		for (const prefix of hiddenPrefixes) {
-			if (parentPrefix && prefix === parentPrefix) {
-				page.hiddenByParent = true
-			}
-			if (page.routePath.startsWith(prefix) && page.routePath !== prefix) {
-				page.hiddenByParents = true
-				if (page.hiddenByParent) break
-			}
-		}
-	}
 	const pagesAll = pageList
-	const isSpecialPage = (page) => page?.routePath === '/404' || page?.routePath === '/offline'
-	const listForNavigation = pageList.filter(
-		(page) => !(isSpecialPage(page) && page.hidden !== false)
-	)
-	const routeExcludes = excludedRoutes || new Set()
-	const dirExcludes = excludedDirs || new Set()
 	const pagesByRoute = new Map()
 	for (const page of pageList) {
 		if (!pagesByRoute.has(page.routePath)) {
 			pagesByRoute.set(page.routePath, page)
 		}
 	}
+	const resolveParentDirRoute = (routePath) => {
+		const normalized = normalizeRoutePath(routePath || '/')
+		if (normalized === '/') return null
+		if (normalized.endsWith('/')) {
+			const stripped = stripTrailingSlash(normalized)
+			const index = stripped.lastIndexOf('/')
+			if (index <= 0) return '/'
+			return `${stripped.slice(0, index)}/`
+		}
+		const index = normalized.lastIndexOf('/')
+		if (index <= 0) return '/'
+		return `${normalized.slice(0, index)}/`
+	}
+	const resolveHiddenAncestor = (routePath) => {
+		let cursor = resolveParentDirRoute(routePath)
+		while (cursor && cursor !== '/') {
+			const page = pagesByRoute.get(cursor)
+			if (page?.isIndex && page?.hidden) {
+				return cursor
+			}
+			cursor = resolveParentDirRoute(cursor)
+		}
+		return null
+	}
+	for (const page of pageList) {
+		const nearestHidden = resolveHiddenAncestor(page.routePath)
+		page.hiddenByParent = nearestHidden
+		page.hiddenByParents = Boolean(nearestHidden)
+	}
+	const isSpecialPage = (page) => page?.routePath === '/404' || page?.routePath === '/offline'
+	const listForNavigation = pageList.filter(
+		(page) => !(isSpecialPage(page) && page.hidden !== false)
+	)
+	const routeExcludes = excludedRoutes || new Set()
+	const dirExcludes = excludedDirs || new Set()
 	const getPageByRoute = (routePath, options = {}) => {
 		const { path } = options || {}
 		if (path) {
@@ -882,19 +881,6 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 			}
 			if (index < 0) return { prev: null, next: null }
 			const normalizedRoutePath = normalizeRoutePath(routePath)
-			const resolveHiddenRoot = (value) => {
-				if (!value) return null
-				const normalized = normalizeRoutePath(value)
-				let match = null
-				for (const prefix of hiddenPrefixes) {
-					if (normalized.startsWith(prefix)) {
-						if (!match || prefix.length > match.length) {
-							match = prefix
-						}
-					}
-				}
-				return match
-			}
 			const isUnderRoute = (routeValue, baseValue) => {
 				if (!routeValue || !baseValue) return false
 				const route = normalizeRoutePath(routeValue)
@@ -906,7 +892,7 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 			const isVisible = (entry) => {
 				if (!entry) return false
 				if (entry.isRoot) {
-					if (entry.hidden !== false || routePath.startsWith(entry.routePath)) {
+					if (!entry.hidden || routePath.startsWith(entry.routePath)) {
 						return true
 					}
 					return false
@@ -914,9 +900,9 @@ export const createPagesContextFromPages = ({ pages, excludedRoutes, excludedDir
 				if (entry.hidden) {
 					return isUnderRoute(normalizedRoutePath, entry.routePath)
 				}
-				const entryHiddenRoot = resolveHiddenRoot(entry.routePath)
-				if (entryHiddenRoot) {
-					return isUnderRoute(normalizedRoutePath, entryHiddenRoot)
+				const entryHiddenRoot = entry.hiddenByParent
+				if (entryHiddenRoot && !isUnderRoute(normalizedRoutePath, entryHiddenRoot)) {
+					return false
 				}
 				return true
 			}

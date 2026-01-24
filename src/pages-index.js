@@ -44,7 +44,7 @@ const sanitizePage = (page) => {
 
 export const serializePagesIndex = (pages) => {
 	const list = Array.isArray(pages)
-		? pages.filter((page) => !page?.hidden).map(sanitizePage)
+		? pages.filter((page) => !page.hidden && !page.hiddenByParents).map(sanitizePage)
 		: []
 	return JSON.stringify(JSON.stringify(list))
 }

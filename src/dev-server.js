@@ -532,16 +532,18 @@ export const runViteDev = async () => {
 
 			let html = ''
 			try {
-				html = await renderHtml({
-					routePath: renderRoutePath,
-					path,
-					components: {
-						...themeComponents,
-						...components
-					},
-					pagesContext,
-					pageMeta
-				})
+				html = await enqueueRender(() =>
+					renderHtml({
+						routePath: renderRoutePath,
+						path,
+						components: {
+							...themeComponents,
+							...components
+						},
+						pagesContext,
+						pageMeta
+					})
+				)
 			} catch (err) {
 				logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
 				await sendDevError(res, err, req.url)
@@ -579,6 +581,13 @@ export const runViteDev = async () => {
 			console.error(err)
 		})
 		return queue
+	}
+
+	let renderQueue = Promise.resolve()
+	const enqueueRender = (task) => {
+		const next = renderQueue.then(task, task)
+		renderQueue = next.catch(() => {})
+		return next
 	}
 
 	const reload = () => {
