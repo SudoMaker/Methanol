@@ -26,7 +26,26 @@ import { state, cli } from './state.js'
 import { createStageLogger } from './stage-logger.js'
 import { logger } from './logger.js'
 
+const resolveLocalPagefindRunner = async () => {
+	const candidates = [
+		join(state.PROJECT_ROOT, 'node_modules', 'pagefind', 'lib', 'runner', 'bin.cjs'),
+		join(state.ROOT_DIR, 'node_modules', 'pagefind', 'lib', 'runner', 'bin.cjs')
+	]
+	for (const candidate of candidates) {
+		try {
+			await access(candidate, constants.R_OK)
+			return { command: process.execPath, args: [candidate] }
+		} catch {}
+	}
+	return null
+}
+
 const resolvePagefindBin = async () => {
+	const localRunner = await resolveLocalPagefindRunner()
+	if (localRunner) {
+		return localRunner
+	}
+
 	const binName = process.platform === 'win32' ? 'pagefind.cmd' : 'pagefind'
 	const candidates = [
 		join(state.PROJECT_ROOT, 'node_modules', '.bin', binName),
@@ -35,7 +54,7 @@ const resolvePagefindBin = async () => {
 	for (const candidate of candidates) {
 		try {
 			await access(candidate, constants.X_OK)
-			return candidate
+			return { command: candidate, args: [] }
 		} catch {}
 	}
 	const pathEntries = (process.env.PATH || '').split(delimiter).filter(Boolean)
@@ -43,7 +62,7 @@ const resolvePagefindBin = async () => {
 		const candidate = join(entry, binName)
 		try {
 			await access(candidate, constants.X_OK)
-			return candidate
+			return { command: candidate, args: [] }
 		} catch {}
 	}
 	return null
@@ -106,7 +125,7 @@ export const runPagefind = async () => {
 	}
 
 	const extraArgs = buildArgsFromOptions(state.PAGEFIND_BUILD)
-	const ok = await runCommand(bin, ['--site', state.DIST_DIR, ...extraArgs], {
+	const ok = await runCommand(bin.command, [...bin.args, '--site', state.DIST_DIR, ...extraArgs], {
 		cwd: state.PROJECT_ROOT,
 		stdio: cli.CLI_VERBOSE ? 'inherit' : 'ignore'
 	})
