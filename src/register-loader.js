@@ -18,7 +18,7 @@
  * under the License.
  */
 
-import { register } from 'node:module'
+import { registerHooks } from 'node:module'
+import { load, resolve } from './node-loader.js'
 
-const loaderUrl = new URL('./node-loader.js', import.meta.url)
-register(loaderUrl.href, import.meta.url)
+registerHooks({ load, resolve })

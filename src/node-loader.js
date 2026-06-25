@@ -18,11 +18,11 @@
  * under the License.
  */
 
-import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { dirname, extname, join, resolve as pathResolve, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createRequire } from 'node:module'
-import { transform } from 'esbuild'
+import { transformSync } from 'esbuild'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -35,7 +35,7 @@ const require = createRequire(import.meta.url)
 
 const EXTS = new Set(['.jsx', '.tsx', '.ts', '.mts', '.cts'])
 
-export async function load(url, context, nextLoad) {
+export function load(url, context, nextLoad) {
 	if (url.startsWith('node:') || url.startsWith('data:')) {
 		return nextLoad(url, context, nextLoad)
 	}
@@ -46,9 +46,9 @@ export async function load(url, context, nextLoad) {
 		return nextLoad(url, context, nextLoad)
 	}
 
-	const source = await readFile(fileURLToPath(url), 'utf-8')
+	const source = readFileSync(fileURLToPath(url), 'utf-8')
 	const loader = ext === '.tsx' ? 'tsx' : ext === '.jsx' ? 'jsx' : 'ts'
-	const result = await transform(source, {
+	const result = transformSync(source, {
 		loader,
 		format: 'esm',
 		jsx: 'automatic',
@@ -65,13 +65,13 @@ export async function load(url, context, nextLoad) {
 }
 
 const startPos = 'methanol'.length
-export async function resolve(specifier, context, nextResolve) {
+export function resolve(specifier, context, nextResolve) {
 	if (specifier === 'refui' || specifier.startsWith('refui/')) {
 		try {
 			// Use user installed rEFui when possible
-			return await nextResolve(specifier, { ...context, parentURL: projectRootURL })
+			return nextResolve(specifier, { ...context, parentURL: projectRootURL })
 		} catch (e) {
-			return await nextResolve(specifier, { ...context, parentURL: import.meta.url })
+			return nextResolve(specifier, { ...context, parentURL: import.meta.url })
 		}
 	} else if (specifier === 'methanol' || specifier.startsWith('methanol/')) {
 		// Force only one Metnanol instance
@@ -83,6 +83,6 @@ export async function resolve(specifier, context, nextResolve) {
 			url: pathToFileURL(filePath).href
 		}
 	} else {
-		return await nextResolve(specifier, context)
+		return nextResolve(specifier, context)
 	}
 }
