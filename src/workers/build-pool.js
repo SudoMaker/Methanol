@@ -18,7 +18,7 @@
  * under the License.
  */
 
-import { cpus } from 'os'
+import { availableParallelism } from 'os'
 import { Worker } from 'worker_threads'
 import { state, cli } from '../state.js'
 
@@ -47,14 +47,14 @@ const cliOverrides = {
 }
 
 const resolveWorkerCount = (total) => {
-	const cpuCount = Math.max(1, cpus()?.length || 1)
+	const maxConcurrency = availableParallelism()
 	const requested = state.WORKER_JOBS
 	if (requested == null || requested <= 0) {
 		const items = Math.max(1, Number.isFinite(total) ? total : 1)
 		const autoCount = Math.round(Math.log(items))
-		return Math.max(1, Math.min(cpuCount, autoCount))
+		return Math.max(1, Math.min(maxConcurrency, autoCount))
 	}
-	return Math.max(1, Math.min(cpuCount, Math.floor(requested)))
+	return Math.max(1, Math.min(maxConcurrency, Math.floor(requested)))
 }
 
 export const createBuildWorkers = (pageCount, options = {}) => {
