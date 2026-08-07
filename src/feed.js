@@ -18,7 +18,7 @@
  * under the License.
  */
 
-import { dirname, resolve } from 'path'
+import { dirname, resolve, relative, isAbsolute } from 'path'
 import { mkdir, writeFile } from 'fs/promises'
 import { state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
@@ -45,6 +45,22 @@ const normalizeFeedPath = (value, isAtom) => {
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
+}
+
+const resolveFeedOutputPath = (distDir, path) => {
+	const root = resolve(distDir)
+	const outPath = resolve(root, path.replace(/^\/+/, ''))
+	const relPath = relative(root, outPath)
+	if (
+		!relPath ||
+		isAbsolute(relPath) ||
+		relPath === '..' ||
+		relPath.startsWith('../') ||
+		relPath.startsWith('..\\')
+	) {
+		throw new Error(`Feed path must resolve to a file inside the output directory: ${path}`)
+	}
+	return outPath
 }
 
 const resolveFeedLimit = (options) => {
@@ -181,7 +197,7 @@ export const generateRssFeed = async (pagesContext, rssContent = null) => {
 	const xml = isAtom
 		? renderAtomFeed({ site: finalSite, items })
 		: renderRssFeed({ site: finalSite, items })
-	const outPath = resolve(state.DIST_DIR, path.slice(1))
+	const outPath = resolveFeedOutputPath(state.DIST_DIR, path)
 	await ensureDir(dirname(outPath))
 	await writeFile(outPath, xml)
 	logger.success(`${isAtom ? 'Atom' : 'RSS'} feed generated: ${path} (${items.length} ${items.length === 1 ? 'item' : 'items'})`)

@@ -96,7 +96,9 @@ export const resolvePrecacheOptions = (input) => {
 		exclude: normalizeList(precache.exclude, DEFAULT_PRECACHE.exclude),
 		priority: Array.isArray(precache.priority) ? precache.priority : DEFAULT_PRECACHE.priority,
 		limit: Number.isFinite(precache.limit) && precache.limit >= 0 ? precache.limit : null,
-		batchSize: Number.isFinite(precache.batchSize) ? precache.batchSize : null
+		batchSize: Number.isFinite(precache.batchSize) && precache.batchSize > 0
+			? Math.floor(precache.batchSize)
+			: null
 	}
 }
 
@@ -104,8 +106,21 @@ const hashMd5 = (value) => createHash('md5').update(value).digest('hex')
 
 const joinBase = (prefix, value) => {
 	if (!prefix) return value
-	if (value.startsWith(prefix)) return value
+	if (value === prefix || value.startsWith(`${prefix}/`)) return value
 	return `${prefix}${value}`
+}
+
+const mapConcurrent = async (items, limit, mapper) => {
+	const results = new Array(items.length)
+	let cursor = 0
+	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+		while (cursor < items.length) {
+			const index = cursor++
+			results[index] = await mapper(items[index], index)
+		}
+	})
+	await Promise.all(workers)
+	return results
 }
 
 const isRootOrAssets = (relativePath) => {
@@ -194,18 +209,20 @@ export const buildPrecacheManifest = async ({ distDir, options }) => {
 		onlyFiles: true,
 		dot: false,
 		ignore: precache.exclude
-	})).filter((file) => normalizePath(file) !== 'precache-manifest.json')
-	const entries = []
-	for (const file of files.sort()) {
+	})).filter((file) => {
+		const normalized = normalizePath(file)
+		return normalized !== 'precache-manifest.json' && normalized !== 'sw.js'
+	})
+	const entries = (await mapConcurrent(files.sort(), 32, async (file) => {
 		const normalized = normalizePath(file)
 		const fsPath = resolve(distDir, file)
-		if (!existsSync(fsPath)) continue
+		if (!existsSync(fsPath)) return null
 		const content = await readFile(fsPath)
 		const revision = hashMd5(content)
 		const url = joinBase(basePrefix, `/${normalized}`)
 		const priority = resolvePriority(normalized, buckets)
-		entries.push({ url, revision, priority })
-	}
+		return { url, revision, priority }
+	})).filter(Boolean)
 	entries.sort((a, b) => {
 		if (a.priority !== b.priority) return a.priority - b.priority
 		return a.url.localeCompare(b.url)

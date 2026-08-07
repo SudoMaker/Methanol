@@ -18,9 +18,9 @@
  * under the License.
  */
 
-import { readdir, stat, lstat, copyFile, mkdir, symlink, unlink, rm, link } from 'fs/promises'
+import { readdir, stat, lstat, copyFile, mkdir, symlink, rm, link } from 'fs/promises'
 import { existsSync } from 'fs'
-import { resolve, dirname, relative, parse } from 'path'
+import { resolve, dirname, parse } from 'path'
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
@@ -29,70 +29,68 @@ const ensureDir = async (dir) => {
 const isWindows = process.platform === 'win32'
 
 const linkOrCopyFile = async (src, dest) => {
-	try {
-		try {
-			await lstat(dest)
-			await unlink(dest)
-		} catch (e) {
-			if (e.code !== 'ENOENT') {
-				try {
-					await rm(dest, { recursive: true, force: true })
-				} catch (e2) {
-					console.error(`Methanol: Failed to clean destination ${dest}`, e2)
-				}
-			}
+	await rm(dest, { recursive: true, force: true })
+	await ensureDir(dirname(dest))
+
+	if (isWindows) {
+		if (parse(src).root.toLowerCase() !== parse(dest).root.toLowerCase()) {
+			await copyFile(src, dest)
+			return 'copied'
 		}
-	} catch (err) {
-		console.error(`Methanol: Failed to remove existing file at ${dest}`, err)
+
+		try {
+			await link(src, dest)
+			return 'hardlinked'
+		} catch {
+			await copyFile(src, dest)
+			return 'copied'
+		}
 	}
 
+	await symlink(src, dest)
+	return 'symlinked'
+}
+
+const ensureTargetDir = async (targetDir) => {
 	try {
-		await ensureDir(dirname(dest))
+		const info = await lstat(targetDir)
+		if (info.isDirectory()) return
+		await rm(targetDir, { recursive: true, force: true })
+	} catch (error) {
+		if (error.code !== 'ENOENT') throw error
+	}
+	await ensureDir(targetDir)
+}
 
-		if (isWindows) {
-			// Windows: Check for different drives first
-			if (parse(src).root.toLowerCase() !== parse(dest).root.toLowerCase()) {
-				await copyFile(src, dest)
-				return 'copied'
-			}
+const processDir = async (sourceDir, targetDir) => {
+	if (!existsSync(sourceDir)) return
+	await ensureTargetDir(targetDir)
+	const entries = await readdir(sourceDir, { withFileTypes: true })
+	for (const entry of entries) {
+		const name = entry.name
+		if (name.startsWith('.')) continue
+		const sourcePath = resolve(sourceDir, name)
+		const targetPath = resolve(targetDir, name)
 
-			// Try hard link (no admin required)
-			try {
-				await link(src, dest)
-				return 'hardlinked'
-			} catch (err) {
-				// Fallback to copy
-				// console.warn(`Methanol: Hardlink failed for ${src} -> ${dest}. Falling back to copy.`, err.message)
-				await copyFile(src, dest)
-				return 'copied (fallback)'
-			}
+		const isDirectory = entry.isDirectory() || (
+			entry.isSymbolicLink() && (await stat(sourcePath)).isDirectory()
+		)
+		if (isDirectory) {
+			await processDir(sourcePath, targetPath)
 		} else {
-			// macOS/Linux: Symlink
-			await symlink(src, dest)
-			return 'symlinked'
+			await linkOrCopyFile(sourcePath, targetPath)
 		}
-	} catch (err) {
-		console.error(`Methanol: Failed to link ${src} to ${dest}`, err)
-		return 'failed'
 	}
 }
 
-const processDir = async (sourceDir, targetDir, accumulated = new Set()) => {
-	if (!existsSync(sourceDir)) return
-	const entries = await readdir(sourceDir)
-	for (const entry of entries) {
-		if (entry.startsWith('.')) continue
-		const sourcePath = resolve(sourceDir, entry)
-		const targetPath = resolve(targetDir, entry)
-		const stats = await stat(sourcePath)
-
-		if (stats.isDirectory()) {
-			await processDir(sourcePath, targetPath, accumulated)
-		} else {
-			await linkOrCopyFile(sourcePath, targetPath)
-			accumulated.add(relative(targetDir, targetPath))
-		}
+const restoreThemeAsset = async (themePath, targetPath) => {
+	const info = await lstat(themePath)
+	if (info.isDirectory()) {
+		await processDir(themePath, targetPath)
+		return 'restored theme assets'
 	}
+	await linkOrCopyFile(themePath, targetPath)
+	return 'restored theme asset'
 }
 
 export const preparePublicAssets = async ({ themeDir, userDir, targetDir }) => {
@@ -110,35 +108,27 @@ export const preparePublicAssets = async ({ themeDir, userDir, targetDir }) => {
 	}
 }
 
-export const updateAsset = async ({ type, path, themeDir, userDir, targetDir, relPath }) => {
+export const updateAsset = async ({ type, themeDir, userDir, targetDir, relPath }) => {
 	const targetPath = resolve(targetDir, relPath)
 
-	if (type === 'unlink') {
-		try {
-			try {
-				await unlink(targetPath)
-			} catch (e) {
-				if (e.code !== 'ENOENT') {
-					await rm(targetPath, { recursive: true, force: true })
-				}
+	if (type === 'unlink' || type === 'unlinkDir') {
+		await rm(targetPath, { recursive: true, force: true })
+		if (themeDir) {
+			const themePath = resolve(themeDir, relPath)
+			if (existsSync(themePath)) {
+				return await restoreThemeAsset(themePath, targetPath)
 			}
-
-			if (themeDir) {
-				const themePath = resolve(themeDir, relPath)
-				if (existsSync(themePath)) {
-					await linkOrCopyFile(themePath, targetPath)
-					return 'restored theme asset'
-				}
-			}
-		} catch (err) {
-			console.error(`Methanol: Error updating asset ${relPath}`, err)
 		}
 		return 'removed'
-	} else {
-		const sourcePath = userDir ? resolve(userDir, relPath) : null
-		if (sourcePath && existsSync(sourcePath)) {
-			await linkOrCopyFile(sourcePath, targetPath)
-			return 'updated'
-		}
 	}
+
+	const sourcePath = userDir ? resolve(userDir, relPath) : null
+	if (!sourcePath || !existsSync(sourcePath)) return null
+	const info = await lstat(sourcePath)
+	if (info.isDirectory()) {
+		await ensureTargetDir(targetPath)
+		return 'updated directory'
+	}
+	await linkOrCopyFile(sourcePath, targetPath)
+	return 'updated'
 }

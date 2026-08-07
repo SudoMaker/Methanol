@@ -59,27 +59,30 @@ const resolveMethanolDir = () => resolve(state.PAGES_DIR, '.methanol')
 
 const isHtmlFile = (name) => name.endsWith('.html')
 const collectHtmlFiles = async (dir, basePath = '') => {
-	const entries = await readdir(dir)
+	const entries = await readdir(dir, { withFileTypes: true })
 	const files = []
-	for (const entry of entries.sort()) {
-		if (entry.startsWith('.') || entry.startsWith('_')) {
+	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+		const name = entry.name
+		if (name.startsWith('.') || name.startsWith('_')) {
 			continue
 		}
-		const fullPath = resolve(dir, entry)
-		const stats = await stat(fullPath)
-		if (stats.isDirectory()) {
-			const nextBase = basePath ? join(basePath, entry) : entry
+		const fullPath = resolve(dir, name)
+		const isDirectory = entry.isDirectory() || (
+			entry.isSymbolicLink() && (await stat(fullPath)).isDirectory()
+		)
+		if (isDirectory) {
+			const nextBase = basePath ? join(basePath, name) : name
 			files.push(...(await collectHtmlFiles(fullPath, nextBase)))
 			continue
 		}
-		if (!isHtmlFile(entry)) {
+		if (!isHtmlFile(name)) {
 			continue
 		}
-		const baseName = entry.replace(/\.html$/, '')
+		const baseName = name.replace(/\.html$/, '')
 		if (baseName.startsWith('_')) {
 			continue
 		}
-		const relativePath = join(basePath, entry).replace(/\\/g, '/')
+		const relativePath = join(basePath, name).replace(/\\/g, '/')
 		files.push({ fullPath, relativePath })
 	}
 	return files
@@ -499,7 +502,7 @@ export const runViteBuild = async (inputs) => {
 		...(finalConfig.build || {}),
 		outDir: state.DIST_DIR,
 		emptyOutDir: true,
-		manifest: finalConfig.build?.manifest === undefined ? true : finalConfig.build.manifest,
+		manifest: true,
 		copyPublicDir: copyPublicDirEnabled,
 		rollupOptions: {
 			...((finalConfig.build && finalConfig.build.rollupOptions) || {}),

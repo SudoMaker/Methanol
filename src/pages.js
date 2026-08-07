@@ -32,6 +32,21 @@ import { createStageLogger } from './stage-logger.js'
 const isPageFile = (name) => name.endsWith('.mdx') || name.endsWith('.md')
 const isIgnoredEntry = (name) => name.startsWith('.') || name.startsWith('_')
 
+const PAGE_IO_CONCURRENCY = Math.min(32, Math.max(4, availableParallelism() * 2))
+
+const mapConcurrent = async (items, limit, mapper) => {
+	const results = new Array(items.length)
+	let cursor = 0
+	const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+		while (cursor < items.length) {
+			const index = cursor++
+			results[index] = await mapper(items[index], index)
+		}
+	})
+	await Promise.all(workers)
+	return results
+}
+
 const pageMetadataCache = new Map()
 const pageDerivedCache = new Map()
 const MDX_WORKER_URL = new URL('./workers/entry-mdx-compile-worker.js', import.meta.url)
@@ -465,20 +480,23 @@ const buildPagesTree = (pages, options = {}) => {
 }
 
 const walkPages = async function* (dir, basePath = '') {
-	const entries = await readdir(dir)
+	const entries = await readdir(dir, { withFileTypes: true })
 	const files = []
 	const dirs = []
 
-	for (const entry of entries.sort()) {
-		if (isIgnoredEntry(entry)) {
+	for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+		const name = entry.name
+		if (isIgnoredEntry(name)) {
 			continue
 		}
-		const fullPath = join(dir, entry)
-		const stats = await stat(fullPath)
-		if (stats.isDirectory()) {
-			dirs.push({ entry, fullPath })
-		} else if (isPageFile(entry)) {
-			files.push({ entry, fullPath })
+		const fullPath = join(dir, name)
+		const isDirectory = entry.isDirectory() || (
+			entry.isSymbolicLink() && (await stat(fullPath)).isDirectory()
+		)
+		if (isDirectory) {
+			dirs.push({ entry: name, fullPath })
+		} else if (isPageFile(name)) {
+			files.push({ entry: name, fullPath })
 		}
 	}
 
@@ -565,8 +583,11 @@ const collectPagesFromDir = async (pagesDir, source) => {
 	if (!pagesDir || !existsSync(pagesDir)) {
 		return []
 	}
-	const pages = []
+	const files = []
 	for await (const page of walkPages(pagesDir)) {
+		files.push(page)
+	}
+	const pages = await mapConcurrent(files, PAGE_IO_CONCURRENCY, async (page) => {
 		const entry = await buildPageEntry({
 			path: page.path,
 			pagesDir,
@@ -574,17 +595,29 @@ const collectPagesFromDir = async (pagesDir, source) => {
 		})
 		if (entry) {
 			entry.isIndex = page.isIndex || entry.isIndex
-			pages.push(entry)
 		}
-	}
-	return pages
+		return entry
+	})
+	return pages.filter(Boolean)
 }
 
 const collectPages = async () => {
-	const userPages = await collectPagesFromDir(state.PAGES_DIR, 'user')
-	const themePages = state.THEME_PAGES_DIR
-		? await collectPagesFromDir(state.THEME_PAGES_DIR, 'theme')
-		: []
+	const [userPages, themePages] = await Promise.all([
+		collectPagesFromDir(state.PAGES_DIR, 'user'),
+		state.THEME_PAGES_DIR ? collectPagesFromDir(state.THEME_PAGES_DIR, 'theme') : []
+	])
+	const assertUniqueRoutes = (pages, source) => {
+		const routes = new Map()
+		for (const page of pages) {
+			const existing = routes.get(page.routePath)
+			if (existing) {
+				throw new Error(`Duplicate ${source} page route "${page.routePath}": ${existing.path} and ${page.path}`)
+			}
+			routes.set(page.routePath, page)
+		}
+	}
+	assertUniqueRoutes(userPages, 'user')
+	assertUniqueRoutes(themePages, 'theme')
 	const userRoutes = new Set(userPages.map((page) => page.routePath))
 	const pages = [...userPages, ...themePages.filter((page) => !userRoutes.has(page.routePath))]
 	const excludedDirs = new Set(pages.filter((page) => page.exclude && page.isIndex && page.dir).map((page) => page.dir))

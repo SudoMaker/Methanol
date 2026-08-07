@@ -109,22 +109,25 @@ export const buildComponentRegistry = async ({ componentsDir = state.COMPONENTS_
 	}
 
 	const walk = async (dir) => {
-		const entries = await readdir(dir)
-		for (const entry of entries) {
-			if (isIgnoredEntry(entry)) {
+		const entries = await readdir(dir, { withFileTypes: true })
+		for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+			const name = entry.name
+			if (isIgnoredEntry(name)) {
 				continue
 			}
-			const fullPath = join(dir, entry)
-			const stats = await stat(fullPath)
-			if (stats.isDirectory()) {
+			const fullPath = join(dir, name)
+			const isDirectory = entry.isDirectory() || (
+				entry.isSymbolicLink() && (await stat(fullPath)).isDirectory()
+			)
+			if (isDirectory) {
 				await walk(fullPath)
 				continue
 			}
-			if (!isComponentFile(entry)) {
+			if (!isComponentFile(name)) {
 				continue
 			}
 
-			const exportName = entry.split('.')[0]
+			const exportName = name.split('.')[0]
 			if (sources.has(exportName)) {
 				continue
 			}
@@ -132,7 +135,7 @@ export const buildComponentRegistry = async ({ componentsDir = state.COMPONENTS_
 			const { component, staticPath } = await buildComponentEntry({
 				dir,
 				exportName,
-				ext: extname(entry),
+				ext: extname(name),
 				register: registerFn
 			})
 			if (!component) continue

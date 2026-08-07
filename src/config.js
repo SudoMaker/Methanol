@@ -20,7 +20,7 @@
 
 import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
-import { resolve, isAbsolute, extname, basename, dirname } from 'path'
+import { resolve, relative, isAbsolute, extname, basename, dirname } from 'path'
 import { pathToFileURL, fileURLToPath } from 'url'
 import { mergeConfig } from 'vite'
 import { isMainThread } from 'worker_threads'
@@ -65,6 +65,36 @@ const resolveOptionalPath = (root, value, fallback) => {
 		return false
 	}
 	return resolveFromRoot(root, value, fallback)
+}
+
+const containsPath = (parent, child) => {
+	if (!parent || !child) return false
+	const relPath = relative(resolve(parent), resolve(child))
+	return relPath === '' || (
+		!isAbsolute(relPath) &&
+		relPath !== '..' &&
+		!relPath.startsWith('../') &&
+		!relPath.startsWith('..\\')
+	)
+}
+
+const assertSafeGeneratedDir = (dir, label) => {
+	if (!dir) return
+	const sourceDirs = [
+		['project root', state.ROOT_DIR],
+		['pages directory', state.PAGES_DIR],
+		['components directory', state.COMPONENTS_DIR],
+		['public directory', state.USER_ASSETS_DIR],
+		['theme root', state.USER_THEME?.root],
+		['theme pages directory', state.THEME_PAGES_DIR],
+		['theme components directory', state.THEME_COMPONENTS_DIR],
+		['theme public directory', state.THEME_ASSETS_DIR]
+	]
+	for (const [sourceLabel, sourceDir] of sourceDirs) {
+		if (sourceDir && containsPath(dir, sourceDir)) {
+			throw new Error(`${label} must not be the same as or contain the ${sourceLabel}: ${dir}`)
+		}
+	}
 }
 
 const resolveThemeComponentDir = (root, value) => {
@@ -516,6 +546,14 @@ export const applyConfig = async (config, mode) => {
 	} else {
 		state.INTERMEDIATE_DIR = null
 	}
+
+	assertSafeGeneratedDir(state.DIST_DIR, 'Output directory')
+	if (state.INTERMEDIATE_DIR) {
+		assertSafeGeneratedDir(state.INTERMEDIATE_DIR, 'Intermediate directory')
+		if (containsPath(state.DIST_DIR, state.INTERMEDIATE_DIR)) {
+			throw new Error(`Intermediate directory must not be inside the output directory: ${state.INTERMEDIATE_DIR}`)
+		}
+	}
 }
 
 export const resolveUserMdxConfig = async () => {
@@ -537,13 +575,11 @@ export const resolveUserMdxConfig = async () => {
 	const themeConfig = await resolveConfig(state.USER_THEME.mdx)
 	const userConfig = await resolveConfig(state.USER_MDX_CONFIG)
 	const merged = { ...themeConfig, ...userConfig }
-	const themePlugins = themeConfig?.rehypePlugins
-	const userPlugins = userConfig?.rehypePlugins
-	if (themePlugins || userPlugins) {
-		const normalize = (value) => (Array.isArray(value) ? value : value ? [value] : [])
-		merged.rehypePlugins = [...normalize(themePlugins), ...normalize(userPlugins)]
-	} else {
-		merged.rehypePlugins = []
+	const normalizePlugins = (value) => (Array.isArray(value) ? value : value ? [value] : [])
+	for (const key of ['rehypePlugins', 'remarkPlugins']) {
+		const themePlugins = themeConfig?.[key]
+		const userPlugins = userConfig?.[key]
+		merged[key] = [...normalizePlugins(themePlugins), ...normalizePlugins(userPlugins)]
 	}
 	state.RESOLVED_MDX_CONFIG = merged
 	return state.RESOLVED_MDX_CONFIG

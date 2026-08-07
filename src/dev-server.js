@@ -20,7 +20,7 @@
 
 import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
-import { resolve, dirname, extname, join, basename, relative } from 'path'
+import { resolve, dirname, extname, join, basename, relative, isAbsolute } from 'path'
 import { fileURLToPath } from 'url'
 import chokidar from 'chokidar'
 import { createServer, mergeConfig } from 'vite'
@@ -125,6 +125,8 @@ export const runViteDev = async () => {
 		assetWatcher.on('add', (path) => handleAssetUpdate('add', path))
 		assetWatcher.on('change', (path) => handleAssetUpdate('change', path))
 		assetWatcher.on('unlink', (path) => handleAssetUpdate('unlink', path))
+		assetWatcher.on('addDir', (path) => handleAssetUpdate('addDir', path))
+		assetWatcher.on('unlinkDir', (path) => handleAssetUpdate('unlinkDir', path))
 	}
 
 	const themeComponentsDir = state.THEME_COMPONENTS_DIR
@@ -207,8 +209,15 @@ export const runViteDev = async () => {
 	}
 	const resolveStaticCandidate = (baseDir, pathname) => {
 		if (!baseDir) return null
-		const target = resolve(baseDir, pathname.replace(/^\//, ''))
-		if (!target.startsWith(baseDir)) return null
+		const root = resolve(baseDir)
+		const target = resolve(root, pathname.replace(/^\//, ''))
+		const relPath = relative(root, target)
+		if (
+			isAbsolute(relPath) ||
+			relPath === '..' ||
+			relPath.startsWith('../') ||
+			relPath.startsWith('..\\')
+		) return null
 		return target
 	}
 
@@ -284,7 +293,8 @@ export const runViteDev = async () => {
 			})
 			if (token !== pagesContextToken) return
 
-			const rendered = await runWorkerStage({
+			const rendered = []
+			await runWorkerStage({
 				workers,
 				stage: 'render',
 				messages: workers.map((worker, index) => ({
@@ -295,7 +305,9 @@ export const runViteDev = async () => {
 						ids: assignments[index]
 					}
 				})),
-				collect: (message) => message.results || []
+				onResult: (result) => {
+					if (result) rendered.push(result)
+				}
 			})
 			if (token !== pagesContextToken || renderEpoch !== htmlCacheEpoch) return
 			for (const item of rendered) {

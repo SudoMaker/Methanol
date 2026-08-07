@@ -35,8 +35,8 @@ const withBase = cachedStr((path) => {
 
 const MANIFEST_URL = withBase('/precache-manifest.json')
 
-const NOT_FOUND_URL = new URL(withBase('/404.html'), self.location.origin).href.toLowerCase()
-const OFFLINE_FALLBACK_URL = new URL(withBase('/offline.html'), self.location.origin).href.toLowerCase()
+const NOT_FOUND_URL = new URL(withBase('/404.html'), self.location.origin).href
+const OFFLINE_FALLBACK_URL = new URL(withBase('/offline.html'), self.location.origin).href
 
 const PAGES_CACHE = withBase(':methanol-pages-swr')
 const ASSETS_CACHE = withBase(':methanol-assets-swr')
@@ -84,7 +84,9 @@ async function loadManifest(force = false) {
 			const installCount = Number.isFinite(data?.installCount)
 				? Math.max(0, Math.min(normalized.length, data.installCount))
 				: normalized.length
-			const batchSize = Number.isFinite(data?.batchSize) ? data.batchSize : DEFAULT_BATCH_SIZE
+			const batchSize = Number.isFinite(data?.batchSize) && data.batchSize > 0
+				? Math.floor(data.batchSize)
+				: DEFAULT_BATCH_SIZE
 			const result = { entries: normalized, installCount, batchSize, hash: data?.hash || '' }
 			manifestCache = result
 			manifestIndexCache = null
@@ -254,19 +256,20 @@ async function runConcurrentQueue(list, { concurrency, handler, stopOnError = tr
 
 	const workerSet = new Array(concurrency)
 
-	const worker = async (index, data) => {
+	const worker = async (slot, itemIndex, data) => {
 		const ok = await handler(data)
 
 		if (!ok && stopOnError) {
-			if (failedIndex === null || index < failedIndex) failedIndex = index
+			if (failedIndex === null || itemIndex < failedIndex) failedIndex = itemIndex
 			return -1
 		}
 
-		return index
+		return slot
 	}
 
 	for (let i = 0; i < concurrency && cursor < list.length; i++) {
-		workerSet[i] = worker(i, list[cursor++], i)
+		const itemIndex = cursor
+		workerSet[i] = worker(i, itemIndex, list[cursor++])
 		await asleep(5)
 	}
 
@@ -276,7 +279,8 @@ async function runConcurrentQueue(list, { concurrency, handler, stopOnError = tr
 			break
 		}
 		await asleep(1)
-		workerSet[finishedIndex] = worker(finishedIndex, list[cursor++])
+		const itemIndex = cursor
+		workerSet[finishedIndex] = worker(finishedIndex, itemIndex, list[cursor++])
 	}
 
 	await Promise.allSettled(workerSet)
@@ -379,10 +383,13 @@ async function putCache(cacheName, urlString, response, revision = null) {
 }
 
 function fetchWithTimeout(request, timeout = 8000) {
+	let timer = null
 	return Promise.race([
 		fetch(request),
-		new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), timeout))
-	])
+		new Promise((_, reject) => {
+			timer = setTimeout(() => reject(new Error('Timeout')), timeout)
+		})
+	]).finally(() => clearTimeout(timer))
 }
 
 async function fetchWithCleanUrlFallback(event, originalRequest, { usePreload = true, allowNotOk = false } = {}) {

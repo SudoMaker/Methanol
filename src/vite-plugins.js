@@ -21,7 +21,7 @@
 import { createRequire } from 'node:module'
 import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { resolve, relative, isAbsolute } from 'node:path'
 import { normalizePath } from 'vite'
 import { state } from './state.js'
 import { resolveBasePrefix } from './config.js'
@@ -82,14 +82,26 @@ export const methanolPreviewRoutingPlugin = (distDir, notFoundPath) => ({
 						}
 					}
 				} catch {}
-				const hasTrailingSlash = pathname.endsWith('/') && pathname !== '/'
 				if (pathname.includes('.') && !pathname.endsWith('.html')) {
 					return next()
 				}
 				if (!pathname.endsWith('.html') && !accept.includes('text/html')) {
 					return next()
 				}
-				const resolveHtmlPath = (value) => resolve(distDir, value.replace(/^\//, ''))
+				const resolveHtmlPath = (value) => {
+					const root = resolve(distDir)
+					const candidate = resolve(root, value.replace(/^\//, ''))
+					const relPath = relative(root, candidate)
+					if (
+						isAbsolute(relPath) ||
+						relPath === '..' ||
+						relPath.startsWith('../') ||
+						relPath.startsWith('..\\')
+					) {
+						return null
+					}
+					return candidate
+				}
 				const candidates = []
 				if (pathname === '/' || pathname === '') {
 					candidates.push(resolveHtmlPath('/index.html'))
@@ -99,7 +111,7 @@ export const methanolPreviewRoutingPlugin = (distDir, notFoundPath) => ({
 					candidates.push(resolveHtmlPath(`${pathname}.html`))
 					candidates.push(resolveHtmlPath(`${pathname}/index.html`))
 				}
-				if (candidates.some((candidate) => existsSync(candidate))) {
+				if (candidates.some((candidate) => candidate && existsSync(candidate))) {
 					return next()
 				}
 				const html = await loadNotFoundHtml()
