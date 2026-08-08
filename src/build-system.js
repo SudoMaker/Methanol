@@ -45,17 +45,7 @@ const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
 }
 
-const ensureSwEntry = async () => {
-	const entriesDir = resolve(resolveMethanolDir(), ENTRY_DIR)
-	await ensureDir(entriesDir)
-	const swEntryPath = resolve(entriesDir, 'sw-entry.js')
-	const swSource = normalizePath(resolve(__dirname, 'client', 'sw.js'))
-	await writeFile(swEntryPath, `import ${JSON.stringify(swSource)}\n`)
-	return swEntryPath
-}
-
 const INLINE_DIR = 'inline'
-const ENTRY_DIR = 'entries'
 const WRITE_CONCURRENCY_LIMIT = 32
 
 const resolveMethanolDir = () => resolve(state.PAGES_DIR, '.methanol')
@@ -501,11 +491,10 @@ export const runRsbuildBuild = async (inputs) => {
 	}
 	let swEntryPath = null
 	if (state.PWA_ENABLED) {
-		swEntryPath = await ensureSwEntry()
+		swEntryPath = normalizePath(resolve(__dirname, 'client', 'sw.js'))
 		if (swEntryPath) {
-			const normalized = normalizePath(swEntryPath)
 			sourceEntries.sw = {
-				import: normalized,
+				import: swEntryPath,
 				html: false,
 				filename: 'sw.js',
 				runtime: false,
@@ -609,7 +598,11 @@ export const runRsbuildBuild = async (inputs) => {
 				protectedJavaScript.add(file)
 			}
 		}
-		for (const file of entryAssetsFromStats(result.stats, 'sw')?.js || []) {
+		const serviceWorkerJavaScript = entryAssetsFromStats(result.stats, 'sw')?.js || []
+		if (state.PWA_ENABLED && (serviceWorkerJavaScript.length !== 1 || serviceWorkerJavaScript[0] !== 'sw.js')) {
+			throw new Error('Rsbuild must emit the service worker as a standalone sw.js file')
+		}
+		for (const file of serviceWorkerJavaScript) {
 			protectedJavaScript.add(file)
 		}
 		const unusedEntryNames = [
