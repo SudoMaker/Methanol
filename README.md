@@ -30,6 +30,8 @@ public/       # static assets copied/served as-is
 dist/         # build output
 ```
 
+Methanol keeps generated working files and its compiled MDX cache under `{pagesDir}/.methanol/`. The directory is safe to delete and should not be committed.
+
 ## Configuration
 
 Create `methanol.config.{js,mjs,cjs,ts,jsx,tsx,mts,cts}` and export a function:
