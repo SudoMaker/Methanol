@@ -48,7 +48,7 @@ const dynamicImport = (path) => {
 		const importer = new Function('p', 'return import(p)')
 		return importer(path)
 	} catch {
-		return import(/* @vite-ignore */path)
+		return import(/* webpackIgnore: true */path)
 	}
 }
 

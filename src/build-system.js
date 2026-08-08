@@ -19,20 +19,23 @@
  */
 
 import { existsSync } from 'fs'
-import { writeFile, mkdir, rm, readFile, readdir, stat } from 'fs/promises'
-import { resolve, dirname, join, basename } from 'path'
+import { writeFile, mkdir, rm, readFile, readdir, stat, copyFile, cp } from 'fs/promises'
+import { resolve, dirname, join } from 'path'
 import { createHash } from 'crypto'
 import { fileURLToPath } from 'url'
-import { build as viteBuild, mergeConfig, normalizePath } from 'vite'
+import { createRsbuild, mergeRsbuildConfig } from '@rsbuild/core'
 import { state, cli } from './state.js'
-import { resolveUserViteConfig } from './config.js'
+import { resolveUserRsbuildConfig } from './config.js'
 import { buildPagesContext } from './pages.js'
 import { selectFeedPages } from './feed.js'
 import { buildComponentRegistry } from './components.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
-import { methanolResolverPlugin } from './vite-plugins.js'
+import { MethanolResolverPlugin, createMethanolVirtualModules } from './rsbuild-plugins.js'
+import { createAssetManifest, entryAssetsFromStats } from './asset-manifest.js'
 import { createStageLogger } from './stage-logger.js'
 import { preparePublicAssets } from './public-assets.js'
+import { normalizePath } from './path-utils.js'
+import { rewriteHtmlEntries } from './html/build-html.js'
 export { scanHtmlEntries, rewriteHtmlEntries } from './html/build-html.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -95,7 +98,7 @@ const makeInputKey = (prefix, value) => `${prefix}-${hashKey(value).slice(0, 12)
 
 export const buildHtmlEntries = async (options = {}) => {
 	const keepWorkers = Boolean(options.keepWorkers)
-	await resolveUserViteConfig('build') // Prepare `base`
+	await resolveUserRsbuildConfig('build') // Prepare the asset base.
 	const htmlStageDir = state.INTERMEDIATE_DIR || resolve(state.PAGES_DIR, '.methanol/html')
 	if (htmlStageDir) {
 		await rm(htmlStageDir, { recursive: true, force: true })
@@ -409,20 +412,65 @@ export const rewriteHtmlEntriesInWorkers = async ({
 	}
 }
 
-export const runViteBuild = async (inputs) => {
+export const rewriteBuildHtml = async ({
+	htmlEntries,
+	pages,
+	htmlStageDir,
+	scanResult,
+	renderScansById,
+	workers,
+	assignments,
+	manifest
+}) => {
+	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
+	const stageLogger = createStageLogger(logEnabled)
+	const token = stageLogger.start('Rewriting HTML')
+	try {
+		await rewriteHtmlEntriesInWorkers({
+			pages,
+			htmlStageDir,
+			manifest,
+			scanResult,
+			renderScansById,
+			workers,
+			assignments,
+			onProgress: (done, total) => {
+				stageLogger.update(token, `Rewriting HTML [${done}/${total}]`)
+			}
+		})
+		await rewriteHtmlEntries(htmlEntries, manifest, scanResult)
+	} finally {
+		stageLogger.end(token)
+	}
+}
+
+export const writeUnbundledHtml = async (htmlEntries) => {
+	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
+		await preparePublicAssets({
+			themeDir: state.THEME_ASSETS_DIR,
+			userDir: state.USER_ASSETS_DIR,
+			targetDir: state.MERGED_ASSETS_DIR
+		})
+	}
+	await rm(state.DIST_DIR, { recursive: true, force: true })
+	await mkdir(state.DIST_DIR, { recursive: true })
+	if (state.STATIC_DIR !== false && state.STATIC_DIR) {
+		await cp(state.STATIC_DIR, state.DIST_DIR, { recursive: true, dereference: true })
+	}
+	for (const entry of htmlEntries) {
+		const name = entry?.name
+		const stagePath = entry?.stagePath || entry?.inputPath
+		if (!name || !stagePath) continue
+		const distPath = resolve(state.DIST_DIR, `${name}.html`)
+		await mkdir(dirname(distPath), { recursive: true })
+		await copyFile(stagePath, distPath)
+	}
+}
+
+export const runRsbuildBuild = async (inputs) => {
 	const logEnabled = state.CURRENT_MODE === 'production' && cli.command === 'build' && !cli.CLI_VERBOSE
 	const stageLogger = createStageLogger(logEnabled)
 	const token = stageLogger.start('Building bundle')
-	const rewriteOptions = inputs.rewrite || null
-	const preWrite = typeof inputs.preWrite === 'function' ? inputs.preWrite : null
-	const postWrite = typeof inputs.postWrite === 'function' ? inputs.postWrite : null
-	let manifestData = null
-	let bundleEnded = false
-	const endBundleStage = () => {
-		if (bundleEnded) return
-		bundleEnded = true
-		stageLogger.end(token)
-	}
 
 	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
 		await preparePublicAssets({
@@ -431,173 +479,153 @@ export const runViteBuild = async (inputs) => {
 			targetDir: state.MERGED_ASSETS_DIR
 		})
 	}
-	const copyPublicDirEnabled = state.STATIC_DIR !== false
 	const entryModules = Array.isArray(inputs.entryModules) ? inputs.entryModules : []
-	const entryInputs = entryModules
-		.filter((entry) => entry && entry.kind !== 'style')
-		.map((entry) => entry.fsPath)
-		.filter(Boolean)
-		.sort()
-	const htmlEntries = Array.isArray(inputs.htmlEntries) ? inputs.htmlEntries : []
-	const htmlInputs = htmlEntries
-		.filter((entry) => entry?.source === 'static' && entry.inputPath)
-		.map((entry) => entry.inputPath)
-		.sort()
-	if (cli.CLI_VERBOSE && entryInputs.length === 0) {
-		console.log('Vite pipeline: no wrapper entries detected (no module scripts/stylesheets found)')
+	const sourceEntries = {}
+	const entryRecords = []
+	let assetsEntryName = null
+	for (const entry of entryModules.filter(Boolean).sort((a, b) => a.fsPath.localeCompare(b.fsPath))) {
+		if (!entry.fsPath || !entry.manifestKey) continue
+		const normalized = normalizePath(entry.fsPath)
+		const entryName = makeInputKey(entry.kind || 'chunk', normalized)
+		sourceEntries[entryName] = { import: normalized, html: false }
+		entryRecords.push({ ...entry, entryName })
 	}
-	const rollupInput = {}
-	for (const entryPath of entryInputs) {
-		const normalized = normalizePath(entryPath)
-		rollupInput[makeInputKey('chunk', normalized)] = normalized
+	if (inputs.assetsEntryPath) {
+		const normalized = normalizePath(inputs.assetsEntryPath)
+		const entryName = makeInputKey('assets', normalized)
+		sourceEntries[entryName] = { import: normalized, html: false }
+		assetsEntryName = entryName
 	}
-	for (const htmlPath of htmlInputs) {
-		const normalized = normalizePath(htmlPath)
-		rollupInput[makeInputKey('html', normalized)] = normalized
+	if (cli.CLI_VERBOSE && Object.keys(sourceEntries).length === 0) {
+		console.log('Rsbuild pipeline: no wrapper entries detected (no module scripts/stylesheets found)')
 	}
 	let swEntryPath = null
 	if (state.PWA_ENABLED) {
 		swEntryPath = await ensureSwEntry()
 		if (swEntryPath) {
 			const normalized = normalizePath(swEntryPath)
-			rollupInput['sw'] = normalized
+			sourceEntries.sw = {
+				import: normalized,
+				html: false,
+				filename: 'sw.js',
+				runtime: false,
+				chunkLoading: false,
+				asyncChunks: false
+			}
 		}
 	}
+	if (Object.keys(sourceEntries).length === 0) {
+		throw new Error('Rsbuild pipeline requires at least one script, stylesheet, asset, or service-worker entry')
+	}
+	const virtualModules = createMethanolVirtualModules()
+	const publicDir = state.STATIC_DIR === false || !state.STATIC_DIR
+		? false
+		: { name: state.STATIC_DIR, copyOnBuild: true, watch: false }
 	const baseConfig = {
-		configFile: false,
 		root: state.PAGES_DIR,
-		appType: 'custom',
-		publicDir: state.STATIC_DIR === false ? false : state.STATIC_DIR,
 		logLevel: cli.CLI_VERBOSE ? 'info' : 'silent',
-		build: {
-			outDir: state.DIST_DIR,
-			emptyOutDir: true,
-			rollupOptions: {
-				input: rollupInput,
-				output: {
-					entryFileNames: (chunk) => (chunk.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js')
-				}
-			},
-			manifest: true,
-			copyPublicDir: copyPublicDirEnabled,
-			minify: true
+		source: {
+			entry: sourceEntries,
+			include: [
+				state.PAGES_DIR,
+				state.COMPONENTS_DIR,
+				state.THEME_COMPONENTS_DIR,
+				resolve(__dirname, 'client')
+			].filter(Boolean)
 		},
-		esbuild: {
-			jsx: 'automatic',
-			jsxImportSource: 'refui'
+		output: {
+			distPath: {
+				root: state.DIST_DIR,
+				js: 'assets',
+				css: 'assets',
+				jsAsync: 'assets',
+				cssAsync: 'assets'
+			},
+			cleanDistPath: true,
+			assetPrefix: state.BUILD_BASE || '/',
+			dataUriLimit: 0,
+			minify: true,
+			legalComments: 'none'
+		},
+		server: {
+			base: state.BUILD_BASE || '/',
+			publicDir
 		},
 		resolve: {
 			dedupe: ['refui', 'methanol']
 		},
-		plugins: [methanolResolverPlugin()]
-	}
-	const userConfig = await resolveUserViteConfig('build')
-	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
-
-	// Keep the pipeline deterministic: do not let user configs override the build root/output/inputs.
-	finalConfig.root = state.PAGES_DIR
-	finalConfig.appType = 'custom'
-	finalConfig.publicDir = state.STATIC_DIR === false ? false : state.STATIC_DIR
-	finalConfig.build = {
-		...(finalConfig.build || {}),
-		outDir: state.DIST_DIR,
-		emptyOutDir: true,
-		manifest: true,
-		copyPublicDir: copyPublicDirEnabled,
-		rollupOptions: {
-			...((finalConfig.build && finalConfig.build.rollupOptions) || {}),
-			input: rollupInput,
-			output: (() => {
-				const existing = finalConfig.build?.rollupOptions?.output
-				const outputConfig = Array.isArray(existing) ? existing[0] || {} : existing || {}
-				return {
-					...outputConfig,
-					entryFileNames: (chunk) => (chunk.name === 'sw' ? 'sw.js' : 'assets/[name]-[hash].js')
+		tools: {
+			htmlPlugin: false,
+			swc: (config) => {
+				config.jsc ||= {}
+				config.jsc.transform ||= {}
+				config.jsc.transform.react = {
+					...(config.jsc.transform.react || {}),
+					runtime: 'automatic',
+					importSource: 'refui',
+					development: false,
+					throwIfNamespace: false
 				}
-			})()
-		}
-	}
-
-	const manifestFileName = typeof finalConfig.build?.manifest === 'string'
-		? finalConfig.build.manifest
-		: '.vite/manifest.json'
-	const manifestPath = resolve(state.DIST_DIR, manifestFileName.replace(/^\//, ''))
-	const manifestEnabled = finalConfig.build?.manifest !== false
-	let rewriteDone = false
-	let preWriteDone = false
-	let postWriteDone = false
-	const loadManifest = async () => {
-		if (!manifestEnabled) return null
-		if (!existsSync(manifestPath)) return null
-		const raw = await readFile(manifestPath, 'utf-8')
-		return JSON.parse(raw)
-	}
-	const runPreWrite = async () => {
-		if (rewriteOptions) {
-			endBundleStage()
-		}
-		if (preWrite) {
-			await preWrite({ manifest: manifestData })
-		}
-	}
-	const runPostWrite = async () => {
-		if (postWrite) {
-			await postWrite({ manifest: manifestData })
-		}
-	}
-	const runRewrite = async () => {
-		if (!rewriteOptions || rewriteDone || !manifestData) return
-		const rewriteToken = logEnabled ? stageLogger.start('Rewriting HTML') : null
-		try {
-			await rewriteHtmlEntriesInWorkers({
-				...rewriteOptions,
-				manifest: manifestData,
-				onProgress: (done, total) => {
-					if (!rewriteToken) return
-					stageLogger.update(rewriteToken, `Rewriting HTML [${done}/${total}]`)
-				}
-			})
-		} finally {
-			rewriteDone = true
-			if (rewriteToken) {
-				stageLogger.end(rewriteToken)
+				return config
+			},
+			rspack: (config) => {
+				config.plugins ||= []
+				config.plugins.push(new MethanolResolverPlugin(), virtualModules.plugin)
+				config.optimization ||= {}
+				config.optimization.runtimeChunk = false
+				return config
 			}
 		}
 	}
+	const userConfig = await resolveUserRsbuildConfig('build')
+	const finalConfig = userConfig ? mergeRsbuildConfig(baseConfig, userConfig) : baseConfig
 
-	const postBundlePlugin = {
-		name: 'methanol:post-bundle',
-		apply: 'build',
-		enforce: 'post',
-		async writeBundle() {
-			manifestData = await loadManifest()
-			await runPreWrite()
-			await runRewrite()
-			await runPostWrite()
-		}
+	// Keep the pipeline deterministic: user config may extend the build but cannot relocate core outputs or entries.
+	finalConfig.root = state.PAGES_DIR
+	finalConfig.source = { ...(finalConfig.source || {}), entry: sourceEntries }
+	finalConfig.output = {
+		...(finalConfig.output || {}),
+		distPath: {
+			...((typeof finalConfig.output?.distPath === 'object' && finalConfig.output.distPath) || {}),
+			root: state.DIST_DIR
+		},
+		cleanDistPath: true,
+		dataUriLimit: 0
 	}
+	finalConfig.server = { ...(finalConfig.server || {}), publicDir }
+	finalConfig.tools = { ...(finalConfig.tools || {}), htmlPlugin: false }
 
-	finalConfig.plugins = [...(finalConfig.plugins || []), postBundlePlugin]
-
-	await viteBuild(finalConfig)
-	endBundleStage()
-	const methanolManifestDir = resolve(state.PAGES_DIR, '.methanol')
-	const methanolManifestPath = resolve(methanolManifestDir, 'manifest.json')
+	const rsbuild = await createRsbuild({
+		cwd: state.PAGES_DIR,
+		callerName: 'methanol',
+		config: finalConfig
+	})
+	const result = await rsbuild.build()
 	try {
-		const parsed = manifestData || (manifestEnabled ? JSON.parse(await readFile(manifestPath, 'utf-8')) : null)
-		if (!parsed) return {}
-		await ensureDir(methanolManifestDir)
-		await writeFile(methanolManifestPath, JSON.stringify(parsed, null, 2))
-		await rm(manifestPath, { force: true })
-		const manifestDir = dirname(manifestPath)
-		if (basename(manifestDir) === '.vite') {
-			await rm(manifestDir, { recursive: true, force: true })
+		const manifest = createAssetManifest({ entryRecords, stats: result.stats })
+		const protectedJavaScript = new Set()
+		for (const record of entryRecords.filter((entry) => entry.kind !== 'style')) {
+			for (const file of entryAssetsFromStats(result.stats, record.entryName)?.js || []) {
+				protectedJavaScript.add(file)
+			}
 		}
-		return parsed
-	} catch (error) {
-		if (cli.CLI_VERBOSE) {
-			console.log(`Vite pipeline: failed to read manifest at ${manifestPath}`)
+		for (const file of entryAssetsFromStats(result.stats, 'sw')?.js || []) {
+			protectedJavaScript.add(file)
 		}
-		return {}
+		const unusedEntryNames = [
+			...entryRecords.filter((entry) => entry.kind === 'style').map((entry) => entry.entryName),
+			assetsEntryName
+		].filter(Boolean)
+		for (const entryName of unusedEntryNames) {
+			for (const file of entryAssetsFromStats(result.stats, entryName)?.js || []) {
+				if (!protectedJavaScript.has(file)) {
+					await rm(resolve(state.DIST_DIR, file), { force: true })
+				}
+			}
+		}
+		return manifest
+	} finally {
+		stageLogger.end(token)
+		await result.close()
 	}
 }

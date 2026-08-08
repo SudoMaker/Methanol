@@ -36,7 +36,7 @@ const parsedHtmlCache = new Map()
 const ensureInit = async () => {
 	if (initPromise) return initPromise
 	initPromise = (async () => {
-		const { loadUserConfig, applyConfig, resolveUserViteConfig } = await import('../config.js')
+		const { loadUserConfig, applyConfig, resolveUserRsbuildConfig } = await import('../config.js')
 		const { buildComponentRegistry } = await import('../components.js')
 		const { state, cli } = await import('../state.js')
 		if (cliOverrides) {
@@ -44,7 +44,7 @@ const ensureInit = async () => {
 		}
 		const config = await loadUserConfig(mode, configPath)
 		await applyConfig(config, mode)
-		await resolveUserViteConfig(command)
+		await resolveUserRsbuildConfig(command)
 		const themeComponentsDir = state.THEME_COMPONENTS_DIR
 		const themeEnv = state.THEME_ENV
 		const themeRegistry = themeComponentsDir
@@ -300,7 +300,11 @@ const handleRewrite = async (message) => {
 		const manifestEntry = resolveManifestEntry(manifest, entry.manifestKey)
 		if (!manifestEntry?.file) continue
 		if (entry.kind === 'script') {
-			scriptMap.set(entry.publicPath, { file: manifestEntry.file, css: manifestEntry.css || null })
+			scriptMap.set(entry.publicPath, {
+				file: manifestEntry.file,
+				js: manifestEntry.js || null,
+				css: manifestEntry.css || null
+			})
 		}
 		if (entry.kind === 'style') {
 			const cssFile = manifestEntry.css?.[0] || (manifestEntry.file.endsWith('.css') ? manifestEntry.file : null)

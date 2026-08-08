@@ -316,8 +316,10 @@ const buildRewritePlan = async (html, routePath) => {
 	}
 }
 
-export const scanRenderedHtml = async (html, routePath) => {
-	const inline = await rewriteInlineScripts(html, routePath)
+export const scanRenderedHtml = async (html, routePath, options = null) => {
+	const inline = options?.rewriteInline === false
+		? { html, changed: false }
+		: await rewriteInlineScripts(html, routePath)
 	const nextHtml = inline.html
 	const { plan, scan } = await buildRewritePlan(nextHtml, routePath)
 	return {
@@ -350,6 +352,7 @@ export const rewriteHtmlByPlan = (
 	const holes = []
 	const cssFiles = new Set()
 	const linkedHrefs = new Set()
+	const linkedScripts = new Set()
 	let commonInserted = false
 
 	const addHole = (start, end, text) => {
@@ -360,6 +363,27 @@ export const rewriteHtmlByPlan = (
 	const replaceTag = (entry, tag, attrs, { closeTag = false } = {}) => {
 		if (!entry || typeof entry.start !== 'number' || typeof entry.end !== 'number') return
 		addHole(entry.start, entry.end, serializeTag(tag, attrs, { closeTag }))
+	}
+	const replaceScriptEntry = (entry, attrs, manifestEntry, suffix = '') => {
+		const files = Array.isArray(manifestEntry?.js) && manifestEntry.js.length
+			? manifestEntry.js
+			: manifestEntry?.file
+				? [manifestEntry.file]
+				: []
+		const tags = []
+		for (const file of files) {
+			if (!file || linkedScripts.has(file)) continue
+			linkedScripts.add(file)
+			tags.push(serializeTag('script', {
+				...attrs,
+				src: joinBasePrefix(basePrefix, file) + suffix
+			}, { closeTag: true }))
+		}
+		if (tags.length) {
+			addHole(entry.start, entry.end, tags.join(''))
+		} else {
+			addHole(entry.start, entry.end, '')
+		}
 	}
 
 	const resolveAssetValue = (rawValue) => {
@@ -390,9 +414,7 @@ export const rewriteHtmlByPlan = (
 				continue
 			}
 			if (!commonInserted) {
-				const newSrc = joinBasePrefix(basePrefix, commonEntry.file) + splitUrlParts(src).suffix
-				attrs.src = newSrc
-				replaceTag(entry, 'script', attrs, { closeTag: true })
+				replaceScriptEntry(entry, attrs, commonEntry, splitUrlParts(src).suffix)
 				commonInserted = true
 				if (Array.isArray(commonEntry.css)) {
 					for (const css of commonEntry.css) {
@@ -406,9 +428,7 @@ export const rewriteHtmlByPlan = (
 		}
 		const entryInfo = scriptMap.get(publicPath)
 		if (!entryInfo?.file) continue
-		const newSrc = joinBasePrefix(basePrefix, entryInfo.file) + splitUrlParts(src).suffix
-		attrs.src = newSrc
-		replaceTag(entry, 'script', attrs, { closeTag: true })
+		replaceScriptEntry(entry, attrs, entryInfo, splitUrlParts(src).suffix)
 		if (Array.isArray(entryInfo.css)) {
 			for (const css of entryInfo.css) {
 				cssFiles.add(css)

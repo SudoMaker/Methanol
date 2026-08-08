@@ -1,6 +1,6 @@
 # Methanol
 
-Opinionated MDX-first static site generator powered by rEFui + Vite.
+Opinionated MDX-first static site generator powered by rEFui + Rsbuild.
 
 For full documentation and examples, visit [Methanol Docs](https://methanol.sudomaker.com/).
 
@@ -53,6 +53,13 @@ export default () => ({
 	// optional: site metadata
 	site: {
 		base: '/docs/'
+	},
+
+	// optional: extend the underlying Rsbuild configuration
+	rsbuild: {
+		output: {
+			sourceMap: true
+		}
 	},
 
 	// optional: theme sources

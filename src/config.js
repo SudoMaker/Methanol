@@ -22,11 +22,9 @@ import { readFile } from 'fs/promises'
 import { existsSync } from 'fs'
 import { resolve, relative, isAbsolute, extname, basename, dirname } from 'path'
 import { pathToFileURL, fileURLToPath } from 'url'
-import { mergeConfig } from 'vite'
-import { isMainThread } from 'worker_threads'
+import { mergeRsbuildConfig } from '@rsbuild/core'
 import { projectRequire } from './node-loader.js'
 import { cli, state } from './state.js'
-import { logger } from './logger.js'
 import { HTMLRenderer } from './renderer.js'
 import { reframeEnv } from './components.js'
 import { env as createEnv } from './reframe.js'
@@ -115,8 +113,6 @@ const resolveThemePublicDir = (root, value) => {
 	return isAbsolute(value) ? value : resolve(root, value)
 }
 
-let devBaseWarningShown = false
-
 const normalizeSiteBase = (value) => {
 	if (value == null) return null
 	if (typeof value !== 'string') return null
@@ -135,7 +131,7 @@ const normalizeSiteBase = (value) => {
 	return base
 }
 
-const normalizeViteBase = (value) => {
+const normalizeBuildBase = (value) => {
 	if (!value || value === '/' || value === './') return '/'
 	if (typeof value !== 'string') return '/'
 	let base = value.trim()
@@ -152,14 +148,6 @@ const normalizeViteBase = (value) => {
 		base = `${base}/`
 	}
 	return base
-}
-
-const warnDevBase = (value) => {
-	if (!isMainThread) return
-	if (devBaseWarningShown) return
-	devBaseWarningShown = true
-	const label = value ? ` (received "${value}")` : ''
-	logger.warn(`Methanol: \`base\`${label} is disabled in dev mode due to module resolution inconsistencies in Vite. Using "/".\n`)
 }
 
 const hasOwn = (obj, key) => Object.prototype.hasOwnProperty.call(obj || {}, key)
@@ -411,8 +399,6 @@ export const applyConfig = async (config, mode) => {
 	}
 	state.USER_PUBLIC_OVERRIDE = userSpecifiedPublicDir
 
-	state.VIRTUAL_HTML_OUTPUT_ROOT = state.PAGES_DIR
-
 	const themeValue = cli.CLI_THEME || config.theme
 	state.USER_THEME = themeValue ? await resolveTheme(themeValue, root) : await defaultTheme()
 	if (!state.USER_THEME?.root && !config.theme?.root) {
@@ -472,10 +458,10 @@ export const applyConfig = async (config, mode) => {
 	}
 
 	state.SOURCES = normalizeSources(state.USER_THEME.sources, themeRoot)
-	state.USER_VITE_CONFIG = config.vite || null
+	state.USER_RSBUILD_CONFIG = config.rsbuild || null
 	state.USER_MDX_CONFIG = config.mdx || null
 	state.RESOLVED_MDX_CONFIG = undefined
-	state.RESOLVED_VITE_CONFIG = undefined
+	state.RESOLVED_RSBUILD_CONFIG = undefined
 	state.PAGEFIND_ENABLED = resolvePagefindEnabled(config)
 	if (cli.CLI_SEARCH !== undefined) {
 		state.PAGEFIND_ENABLED = cli.CLI_SEARCH
@@ -585,74 +571,50 @@ export const resolveUserMdxConfig = async () => {
 	return state.RESOLVED_MDX_CONFIG
 }
 
-export const resolveUserViteConfig = async (command) => {
-	if (state.RESOLVED_VITE_CONFIG !== undefined) {
-		return state.RESOLVED_VITE_CONFIG
+export const resolveUserRsbuildConfig = async (command) => {
+	if (state.RESOLVED_RSBUILD_CONFIG !== undefined) {
+		return state.RESOLVED_RSBUILD_CONFIG
 	}
 
 	const resolveConfig = async (config) => {
 		if (!config) return null
 		if (typeof config === 'function') {
-			const isPreview = command === 'preview'
 			return (
 				(await config({
 					mode: state.CURRENT_MODE,
 					root: state.ROOT_DIR,
-					command: isPreview ? 'serve' : command,
-					isPreview
+					command,
+					isPreview: command === 'preview'
 				})) || null
 			)
 		}
 		return config || null
 	}
 
-	const themeConfig = await resolveConfig(state.USER_THEME.vite)
-	const userConfig = await resolveConfig(state.USER_VITE_CONFIG)
+	const themeConfig = await resolveConfig(state.USER_THEME.rsbuild)
+	const userConfig = await resolveConfig(state.USER_RSBUILD_CONFIG)
 
 	if (!themeConfig && !userConfig) {
-		if (state.SITE_BASE) {
-			state.RESOLVED_VITE_CONFIG = { base: state.SITE_BASE }
-		} else {
-			state.RESOLVED_VITE_CONFIG = null
-		}
-		state.VITE_BASE = normalizeViteBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '/')
-		if (command === 'serve') {
-			if (state.VITE_BASE !== '/' || (state.SITE_BASE && state.SITE_BASE !== '/')) {
-				warnDevBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '')
-			}
-			if (state.RESOLVED_VITE_CONFIG) {
-				state.RESOLVED_VITE_CONFIG.base = '/'
-			}
-			state.VITE_BASE = '/'
-		}
-		return state.RESOLVED_VITE_CONFIG
+		state.RESOLVED_RSBUILD_CONFIG = null
+		state.BUILD_BASE = normalizeBuildBase(state.SITE_BASE || '/')
+		return state.RESOLVED_RSBUILD_CONFIG
 	}
 
-	state.RESOLVED_VITE_CONFIG = themeConfig
+	state.RESOLVED_RSBUILD_CONFIG = themeConfig
 		? userConfig
-			? mergeConfig(themeConfig, userConfig)
+			? mergeRsbuildConfig(themeConfig, userConfig)
 			: themeConfig
 		: userConfig
 
-	const userHasBase = userConfig && hasOwn(userConfig, 'base')
-	if (state.SITE_BASE && (cli.CLI_BASE || !userHasBase)) {
-		state.RESOLVED_VITE_CONFIG.base = state.SITE_BASE
-	}
+	const configuredBase = command === 'build'
+		? state.RESOLVED_RSBUILD_CONFIG?.output?.assetPrefix
+		: state.RESOLVED_RSBUILD_CONFIG?.server?.base
+	state.BUILD_BASE = normalizeBuildBase(state.SITE_BASE || configuredBase || '/')
 
-	state.VITE_BASE = normalizeViteBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '/')
-
-	if (command === 'serve') {
-		if (state.VITE_BASE !== '/' || (state.SITE_BASE && state.SITE_BASE !== '/')) {
-			warnDevBase(state.RESOLVED_VITE_CONFIG?.base || state.SITE_BASE || '')
-		}
-		state.RESOLVED_VITE_CONFIG.base = '/'
-		state.VITE_BASE = '/'
-	}
-
-	return state.RESOLVED_VITE_CONFIG
+	return state.RESOLVED_RSBUILD_CONFIG
 }
 
-export const resolveBasePrefix = cached(() => normalizeBasePrefix(state.VITE_BASE || state.SITE_BASE || '/'))
+export const resolveBasePrefix = cached(() => normalizeBasePrefix(state.BUILD_BASE || state.SITE_BASE || '/'))
 
 export const withBase = cachedStr((value) => {
 	if (!value || typeof value !== 'string') return value

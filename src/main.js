@@ -19,20 +19,24 @@
  */
 
 import { loadUserConfig, applyConfig } from './config.js'
-import { runViteDev } from './dev-server.js'
-import { buildHtmlEntries, runViteBuild, scanHtmlEntries } from './build-system.js'
+import { runRsbuildDev } from './dev-server.js'
+import {
+	buildHtmlEntries,
+	rewriteBuildHtml,
+	runRsbuildBuild,
+	scanHtmlEntries,
+	writeUnbundledHtml
+} from './build-system.js'
 import { buildPrecacheManifest, patchServiceWorker, writeWebManifest } from './pwa.js'
 import { terminateWorkers } from './workers/build-pool.js'
 import { runPagefind } from './pagefind.js'
 import { generateRssFeed } from './feed.js'
-import { runVitePreview } from './preview-server.js'
+import { runRsbuildPreview } from './preview-server.js'
 import { cli, state } from './state.js'
 import { HTMLRenderer } from './renderer.js'
-import { readFile, rm, mkdir, copyFile, cp } from 'fs/promises'
-import { resolve, dirname } from 'path'
+import { readFile } from 'fs/promises'
 import { style, logger } from './logger.js'
 import { createStageLogger } from './stage-logger.js'
-import { preparePublicAssets } from './public-assets.js'
 
 const printBanner = async () => {
 	try {
@@ -70,7 +74,7 @@ const main = async () => {
 	const config = await loadUserConfig(mode, cli.CLI_CONFIG_PATH)
 	await applyConfig(config, mode)
 	const userSite = state.USER_SITE || {}
-	const siteBase = state.VITE_BASE ?? userSite.base ?? null
+	const siteBase = state.BUILD_BASE ?? userSite.base ?? null
 	const hookContext = {
 		mode,
 		root: state.ROOT_DIR,
@@ -107,11 +111,11 @@ const main = async () => {
 	if (isDev) {
 		await runHooks(state.USER_PRE_BUILD_HOOKS)
 		await runHooks(state.THEME_PRE_BUILD_HOOKS)
-		await runViteDev()
+		await runRsbuildDev()
 		return
 	}
 	if (isPreview) {
-		await runVitePreview()
+		await runRsbuildPreview()
 		return
 	}
 	if (isBuild) {
@@ -135,8 +139,7 @@ const main = async () => {
 		const hasCommonScripts = Array.isArray(scanResult.commonScripts) && scanResult.commonScripts.length > 0
 		const hasCommonEntry = Boolean(scanResult.commonScriptEntry)
 		const hasAssetsEntry = Boolean(scanResult.assetsEntryPath)
-		const hasStaticHtmlInputs = htmlEntries.some((entry) => entry?.source === 'static' && entry.inputPath)
-		const shouldBundle = state.PWA_ENABLED || hasEntryModules || hasCommonScripts || hasCommonEntry || hasAssetsEntry || hasStaticHtmlInputs
+		const shouldBundle = state.PWA_ENABLED || hasEntryModules || hasCommonScripts || hasCommonEntry || hasAssetsEntry
 		const buildContext = pagesContext
 			? {
 					pagesContext,
@@ -151,59 +154,31 @@ const main = async () => {
 
 		let finalizeToken = null
 		try {
+			let manifest = null
 			if (shouldBundle) {
-				await runViteBuild({
-					...scanResult,
+				manifest = await runRsbuildBuild(scanResult)
+			}
+			await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
+			await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
+			await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
+			await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
+			if (manifest) {
+				await rewriteBuildHtml({
 					htmlEntries,
-					preWrite: async () => {
-						await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
-						await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
-						await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
-						await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
-					},
-					postWrite: async () => {
-						await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
-						await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
-						finalizeToken = stageLogger.start('Finalizing build')
-					},
-					rewrite: {
-						pages: pagesContext?.pagesAll || pagesContext?.pages || [],
-						htmlStageDir,
-						scanResult,
-						renderScansById,
-						workers,
-						assignments
-					}
+					pages: pagesContext?.pagesAll || pagesContext?.pages || [],
+					htmlStageDir,
+					scanResult,
+					renderScansById,
+					workers,
+					assignments,
+					manifest
 				})
 			} else {
-				await runHooks(state.THEME_POST_BUNDLE_HOOKS, buildContext)
-				await runHooks(state.USER_POST_BUNDLE_HOOKS, buildContext)
-				await runHooks(state.USER_PRE_WRITE_HOOKS, buildContext)
-				await runHooks(state.THEME_PRE_WRITE_HOOKS, buildContext)
-				if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
-					await preparePublicAssets({
-						themeDir: state.THEME_ASSETS_DIR,
-						userDir: state.USER_ASSETS_DIR,
-						targetDir: state.MERGED_ASSETS_DIR
-					})
-				}
-				await rm(state.DIST_DIR, { recursive: true, force: true })
-				await mkdir(state.DIST_DIR, { recursive: true })
-				if (state.STATIC_DIR !== false && state.STATIC_DIR) {
-					await cp(state.STATIC_DIR, state.DIST_DIR, { recursive: true, dereference: true })
-				}
-				for (const entry of htmlEntries) {
-					const name = entry?.name
-					const stagePath = entry?.stagePath || entry?.inputPath
-					if (!name || !stagePath) continue
-					const distPath = resolve(state.DIST_DIR, `${name}.html`)
-					await mkdir(dirname(distPath), { recursive: true })
-					await copyFile(stagePath, distPath)
-				}
-				await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
-				await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
-				finalizeToken = stageLogger.start('Finalizing build')
+				await writeUnbundledHtml(htmlEntries)
 			}
+			await runHooks(state.THEME_POST_WRITE_HOOKS, buildContext)
+			await runHooks(state.USER_POST_WRITE_HOOKS, buildContext)
+			finalizeToken = stageLogger.start('Finalizing build')
 		} finally {
 			if (workers) {
 				await terminateWorkers(workers)

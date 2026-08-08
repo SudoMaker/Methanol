@@ -24,7 +24,7 @@ import { readFile, writeFile } from 'fs/promises'
 import { resolve } from 'path'
 import fg from 'fast-glob'
 import picomatch from 'picomatch'
-import { normalizePath } from 'vite'
+import { normalizePath } from './path-utils.js'
 import { state } from './state.js'
 import { resolveBasePrefix } from './config.js'
 

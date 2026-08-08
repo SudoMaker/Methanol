@@ -18,15 +18,8 @@
  * under the License.
  */
 
-import { compile, run } from '@mdx-js/mdx'
 import * as JSXFactory from 'refui/jsx-runtime'
 import * as JSXDevFactory from 'refui/jsx-dev-runtime'
-import rehypeSlug from 'rehype-slug'
-import extractToc from '@stefanprobst/rehype-extract-toc'
-import withTocExport from '@stefanprobst/rehype-extract-toc/mdx'
-import rehypeStarryNight from 'rehype-starry-night'
-import { createStarryNight } from '@wooorm/starry-night'
-import remarkGfm from 'remark-gfm'
 import { HTMLRenderer } from './renderer.js'
 import { Suspense, nextTick } from 'refui'
 import { createPortal } from 'refui/extras'
@@ -35,12 +28,51 @@ import { existsSync } from 'fs'
 import { resolve, dirname, basename, relative } from 'path'
 import { state } from './state.js'
 import { resolveUserMdxConfig, withBase } from './config.js'
-import { methanolCtx } from './rehype-plugins/methanol-ctx.js'
-import { linkResolve } from './rehype-plugins/link-resolve.js'
 import { cached } from './utils.js'
+import { readCompiledMdxCache, writeCompiledMdxCache } from './mdx-cache.js'
 import { resetReframeRenderCount, setReframeHydrationEnabled, getReframeHydrationEnabled } from './components.js'
 
-// Workaround for Vite: it doesn't support resolving module/virtual modules in script src in dev mode
+const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor
+
+let compilerDependenciesFuture = null
+const loadCompilerDependencies = () => {
+	if (!compilerDependenciesFuture) {
+		compilerDependenciesFuture = Promise.all([
+			import('@mdx-js/mdx'),
+			import('rehype-slug'),
+			import('@stefanprobst/rehype-extract-toc'),
+			import('@stefanprobst/rehype-extract-toc/mdx'),
+			import('remark-gfm'),
+			import('./rehype-plugins/methanol-ctx.js'),
+			import('./rehype-plugins/link-resolve.js')
+		]).then(([mdx, slug, toc, tocExport, gfm, context, links]) => ({
+			compile: mdx.compile,
+			rehypeSlug: slug.default,
+			extractToc: toc.default,
+			withTocExport: tocExport.default,
+			remarkGfm: gfm.default,
+			methanolCtx: context.methanolCtx,
+			linkResolve: links.linkResolve
+		}))
+	}
+	return compilerDependenciesFuture
+}
+
+let starryNightDependenciesFuture = null
+const loadStarryNightDependencies = () => {
+	if (!starryNightDependenciesFuture) {
+		starryNightDependenciesFuture = Promise.all([
+			import('rehype-starry-night'),
+			import('@wooorm/starry-night')
+		]).then(([rehype, starry]) => ({
+			rehypeStarryNight: rehype.default,
+			createStarryNight: starry.createStarryNight,
+			grammars: Array.isArray(starry.all) ? starry.all : []
+		}))
+	}
+	return starryNightDependenciesFuture
+}
+
 const resolveRewindInject = cached(() =>
 	HTMLRenderer.rawHTML(`<script type="module" src="${withBase('/.methanol_virtual_module/inject.js')}"></script>`)
 )
@@ -289,8 +321,7 @@ const failedLanguageCache = new Set()
 const failedCustomLanguageCache = new Map()
 const loadStarryNight = async (options) => {
 	if (!starryNightFuture) {
-		starryNightFuture = import('@wooorm/starry-night').then(async (mod) => {
-			const grammars = Array.isArray(mod?.all) ? mod.all : []
+		starryNightFuture = loadStarryNightDependencies().then(async ({ createStarryNight, grammars }) => {
 			const starryNight = await createStarryNight(grammars, cleanStarryOptions(options))
 			return {
 				starryNight,
@@ -392,6 +423,7 @@ const resolveStarryNightGrammars = async (languages, options) => {
 	}
 	let flagToScope = null
 	if (hasCustomGrammars) {
+		const { createStarryNight } = await loadStarryNightDependencies()
 		const customStarryNight = await createStarryNight(baseGrammars, cleanStarryOptions(options))
 		flagToScope = (lang) => customStarryNight.flagToScope(String(lang))
 	} else {
@@ -464,6 +496,8 @@ const resolveBaseMdxConfig = async () => {
 	if (cachedMdxConfig) {
 		return cachedMdxConfig
 	}
+	const { rehypeSlug, extractToc, withTocExport, remarkGfm, methanolCtx, linkResolve } =
+		await loadCompilerDependencies()
 	const baseMdxConfig = {
 		outputFormat: 'function-body',
 		jsxRuntime: 'automatic',
@@ -492,6 +526,7 @@ const resolveBaseMdxConfig = async () => {
 
 const resolveMdxConfigForPage = async (frontmatter, content = '') => {
 	const baseConfig = await resolveBaseMdxConfig()
+	const { linkResolve } = await loadCompilerDependencies()
 	const mdxConfig = {
 		...baseConfig,
 		rehypePlugins: [...baseConfig.rehypePlugins]
@@ -510,6 +545,7 @@ const resolveMdxConfigForPage = async (frontmatter, content = '') => {
 		}
 		options = { ...(options || {}), grammars }
 	}
+	const { rehypeStarryNight } = await loadStarryNightDependencies()
 	const plugin = options ? [rehypeStarryNight, options] : [rehypeStarryNight]
 	const insertIndex = mdxConfig.rehypePlugins.indexOf(linkResolve)
 	if (insertIndex >= 0) {
@@ -521,16 +557,21 @@ const resolveMdxConfigForPage = async (frontmatter, content = '') => {
 }
 
 export const compileMdxSource = async ({ content, path, frontmatter }) => {
+	const cached = await readCompiledMdxCache({ content, path, frontmatter })
+	if (cached.result) return cached.result
 	const mdxConfig = await resolveMdxConfigForPage(frontmatter, content)
+	const { compile } = await loadCompilerDependencies()
 	const compiled = await compile({ value: content, path: path }, mdxConfig)
 	const code = String(compiled.value ?? compiled)
-	return { code, development: Boolean(mdxConfig.development) }
+	const result = { code, development: Boolean(mdxConfig.development) }
+	await writeCompiledMdxCache(cached.record, result)
+	return result
 }
 
 export const runMdxSource = async ({ code, path, ctx, development = null }) => {
 	const isDev = development == null ? state.CURRENT_MODE !== 'production' : development
 	const runtimeFactory = isDev ? JSXDevFactory : JSXFactory
-	return await run(code, {
+	return await new AsyncFunction(String(code))({
 		...runtimeFactory,
 		baseUrl: pathToFileURL(path).href,
 		ctx,

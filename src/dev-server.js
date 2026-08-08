@@ -21,12 +21,13 @@
 import { existsSync } from 'fs'
 import { readFile } from 'fs/promises'
 import { resolve, dirname, extname, join, basename, relative, isAbsolute } from 'path'
+import { createHash } from 'crypto'
 import { fileURLToPath } from 'url'
 import chokidar from 'chokidar'
-import { createServer, mergeConfig } from 'vite'
-import { refurbish } from 'refurbish/vite'
+import fg from 'fast-glob'
+import { createRsbuild, mergeRsbuildConfig } from '@rsbuild/core'
 import { state, cli } from './state.js'
-import { resolveUserViteConfig } from './config.js'
+import { resolveBasePrefix, resolveUserRsbuildConfig } from './config.js'
 import {
 	buildComponentRegistry,
 	buildComponentEntry,
@@ -40,95 +41,100 @@ import { buildPagesContext, buildPageEntry, routePathFromFile } from './pages.js
 import { compilePageMdx, renderHtml } from './mdx.js'
 import { DevErrorPage } from './templates/error-page.jsx'
 import { HTMLRenderer } from './renderer.js'
-import { methanolResolverPlugin } from './vite-plugins.js'
+import { MethanolRefurbishPlugin, MethanolResolverPlugin, createMethanolVirtualModules } from './rsbuild-plugins.js'
+import { createAssetManifest } from './asset-manifest.js'
 import { preparePublicAssets, updateAsset } from './public-assets.js'
 import { createBuildWorkers, runWorkerStage, terminateWorkers } from './workers/build-pool.js'
 import { virtualModuleDir } from './client/virtual-module/assets.js'
+import { scanRenderedHtml, rewriteHtmlContent } from './html/worker-html.js'
 import { style } from './logger.js'
 
-export const runViteDev = async () => {
-	const baseFsAllow = [virtualModuleDir, state.ROOT_DIR, state.USER_THEME.root].filter(Boolean)
-	if (state.MERGED_ASSETS_DIR) {
-		baseFsAllow.push(state.MERGED_ASSETS_DIR)
-	}
-	const baseConfig = {
-		configFile: false,
-		root: state.PAGES_DIR,
-		appType: 'mpa',
-		publicDir: state.STATIC_DIR === false ? false : state.STATIC_DIR,
-		server: {
-			fs: {
-				allow: baseFsAllow
-			}
-		},
-		esbuild: {
-			jsx: 'automatic',
-			jsxImportSource: 'refui'
-		},
-		resolve: {
-			dedupe: ['refui', 'methanol']
-		},
-		plugins: [methanolResolverPlugin(), refurbish()]
-	}
-	const userConfig = await resolveUserViteConfig('serve')
-	const finalConfig = userConfig ? mergeConfig(baseConfig, userConfig) : baseConfig
-	const devBase = state.VITE_BASE || '/'
-	const devBasePrefix = devBase === '/' ? '' : devBase.slice(0, -1)
-	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
-		await preparePublicAssets({
-			themeDir: state.THEME_ASSETS_DIR,
-			userDir: state.USER_ASSETS_DIR,
-			targetDir: state.MERGED_ASSETS_DIR
-		})
-	}
-	if (cli.CLI_PORT != null) {
-		finalConfig.server = { ...(finalConfig.server || {}), port: cli.CLI_PORT }
-	}
-	if (cli.CLI_HOST !== null) {
-		finalConfig.server = { ...(finalConfig.server || {}), host: cli.CLI_HOST }
-	}
-	if (baseFsAllow.length) {
-		const fsConfig = finalConfig.server?.fs || {}
-		const allow = Array.isArray(fsConfig.allow) ? fsConfig.allow : []
-		for (const dir of baseFsAllow) {
-			if (!allow.includes(dir)) {
-				allow.push(dir)
-			}
-		}
-		finalConfig.server = {
-			...(finalConfig.server || {}),
-			fs: {
-				...fsConfig,
-				allow
-			}
-		}
-	}
-	const server = await createServer(finalConfig)
+const DEV_ENTRY_PATTERN = '**/*.{js,mjs,cjs,ts,mts,cts,jsx,tsx,css,svg,png,jpg,jpeg,gif,webp,avif,ico,woff,woff2,ttf,otf,eot,mp3,mp4,webm,wav,ogg,pdf}'
+const DEV_ENTRY_IGNORE = [
+	'**/node_modules/**',
+	'.methanol/entries/**',
+	'.methanol/html/**',
+	'.methanol/virtual/**',
+	'.methanol/assets-entry.js'
+]
 
-	if (state.MERGED_ASSETS_DIR && state.USER_ASSETS_DIR) {
-		const assetWatcher = chokidar.watch(state.USER_ASSETS_DIR, {
-			ignoreInitial: true
+const entryNameFor = (value) => `source-${createHash('md5').update(value).digest('hex').slice(0, 12)}`
+
+const collectDevEntries = async () => {
+	const records = []
+	const byPublicPath = new Set()
+	const add = (fsPath, publicPath, kind = null, entryName = null) => {
+		if (!fsPath || !publicPath || byPublicPath.has(publicPath)) return
+		byPublicPath.add(publicPath)
+		const name = entryName || entryNameFor(fsPath)
+		records.push({
+			entryName: name,
+			fsPath,
+			publicPath,
+			manifestKey: publicPath.replace(/^\//, ''),
+			kind: kind || (() => {
+				const extension = extname(fsPath).toLowerCase()
+				if (extension === '.css') return 'style'
+				if (/^\.(?:[cm]?[jt]sx?)$/.test(extension)) return 'script'
+				return 'asset'
+			})()
 		})
-		const handleAssetUpdate = (type, path) => {
-			const relPath = relative(state.USER_ASSETS_DIR, path)
-			enqueue(async () => {
-				await updateAsset({
-					type,
-					path,
-					relPath,
-					themeDir: state.THEME_ASSETS_DIR,
-					userDir: state.USER_ASSETS_DIR,
-					targetDir: state.MERGED_ASSETS_DIR
-				})
+	}
+
+	add(resolve(virtualModuleDir, 'inject.js'), '/.methanol_virtual_module/inject.js', 'script', 'methanol-client')
+	const roots = [{ root: state.PAGES_DIR, prefix: '' }]
+	for (const entry of state.SOURCES) {
+		if (typeof entry.find !== 'string') continue
+		roots.push({ root: entry.replacement, prefix: entry.find })
+	}
+	for (const { root, prefix } of roots) {
+		if (!root || !existsSync(root)) continue
+		const files = await fg(DEV_ENTRY_PATTERN, {
+			cwd: root,
+			absolute: true,
+			onlyFiles: true,
+			ignore: DEV_ENTRY_IGNORE
+		})
+		for (const path of files.sort()) {
+			const relPath = relative(root, path).replace(/\\/g, '/')
+			const publicPath = `${prefix || ''}/${relPath}`.replace(/\/+/g, '/')
+			add(path, publicPath.startsWith('/') ? publicPath : `/${publicPath}`)
+		}
+	}
+
+	const sourceEntries = Object.fromEntries(records.map((record) => [
+		record.entryName,
+		{ import: record.fsPath, html: false }
+	]))
+	return { records, sourceEntries }
+}
+
+const createDevManifestMaps = (manifest, records) => {
+	const scriptMap = new Map()
+	const styleMap = new Map()
+	for (const record of records) {
+		const entry = manifest[record.manifestKey]
+		if (!entry?.file) continue
+		if (record.kind === 'script') {
+			scriptMap.set(record.publicPath, {
+				file: entry.file,
+				js: entry.js || null,
+				css: entry.css || null
 			})
+		} else if (record.kind === 'style') {
+			const cssFile = entry.css?.[0] || (entry.file.endsWith('.css') ? entry.file : null)
+			if (cssFile) styleMap.set(record.publicPath, { file: cssFile, css: entry.css || null })
 		}
-		assetWatcher.on('add', (path) => handleAssetUpdate('add', path))
-		assetWatcher.on('change', (path) => handleAssetUpdate('change', path))
-		assetWatcher.on('unlink', (path) => handleAssetUpdate('unlink', path))
-		assetWatcher.on('addDir', (path) => handleAssetUpdate('addDir', path))
-		assetWatcher.on('unlinkDir', (path) => handleAssetUpdate('unlinkDir', path))
 	}
+	return { scriptMap, styleMap }
+}
 
+export const runRsbuildDev = async () => {
+	await resolveUserRsbuildConfig('dev')
+	let handleHtmlRequest = null
+	const initialEntries = await collectDevEntries()
+	let currentEntries = initialEntries
+	let devManifestCache = null
 	const themeComponentsDir = state.THEME_COMPONENTS_DIR
 	const themeEnv = state.THEME_ENV
 	const themeRegistry = themeComponentsDir
@@ -154,6 +160,153 @@ export const runViteDev = async () => {
 	setPagesContext(await buildPagesContext({ compileAll: false }))
 	const htmlCache = new Map()
 	let htmlCacheEpoch = 0
+	const virtualModules = createMethanolVirtualModules()
+	const publicDir = state.STATIC_DIR === false || !state.STATIC_DIR
+		? false
+		: { name: state.STATIC_DIR, copyOnBuild: false, watch: false }
+	const baseConfig = {
+		root: state.PAGES_DIR,
+		logLevel: 'info',
+		source: {
+			entry: initialEntries.sourceEntries,
+			include: [
+				state.PAGES_DIR,
+				state.COMPONENTS_DIR,
+				state.THEME_COMPONENTS_DIR,
+				resolve(dirname(fileURLToPath(import.meta.url)), 'client')
+			].filter(Boolean)
+		},
+		output: {
+			distPath: {
+				root: state.DIST_DIR,
+				js: 'assets',
+				css: 'assets',
+				jsAsync: 'assets',
+				cssAsync: 'assets'
+			},
+			filenameHash: false,
+			cleanDistPath: false,
+			dataUriLimit: 0
+		},
+		dev: {
+			hmr: true,
+			liveReload: true
+		},
+		server: {
+			base: state.BUILD_BASE || '/',
+			publicDir,
+			htmlFallback: false,
+			setup: ({ server }) => {
+				server.middlewares.use((req, res, next) => {
+					if (!handleHtmlRequest) return next()
+					return handleHtmlRequest(req, res, next)
+				})
+			}
+		},
+		resolve: {
+			dedupe: ['refui', 'methanol']
+		},
+		tools: {
+			htmlPlugin: false,
+			swc: (config) => {
+				config.jsc ||= {}
+				config.jsc.transform ||= {}
+				config.jsc.transform.react = {
+					...(config.jsc.transform.react || {}),
+					runtime: 'automatic',
+					importSource: 'refui',
+					development: true,
+					throwIfNamespace: false
+				}
+				return config
+			},
+			rspack: (config) => {
+				config.plugins ||= []
+				config.plugins.push(new MethanolResolverPlugin(), virtualModules.plugin, new MethanolRefurbishPlugin())
+				config.optimization ||= {}
+				config.optimization.runtimeChunk = 'single'
+				const baseEntry = config.entry
+				config.entry = async () => {
+					const inherited = typeof baseEntry === 'function' ? await baseEntry() : baseEntry || {}
+					currentEntries = await collectDevEntries()
+					return { ...inherited, ...currentEntries.sourceEntries }
+				}
+				return config
+			}
+		}
+	}
+	const userConfig = await resolveUserRsbuildConfig('dev')
+	const finalConfig = userConfig ? mergeRsbuildConfig(baseConfig, userConfig) : baseConfig
+	finalConfig.root = state.PAGES_DIR
+	finalConfig.source = { ...(finalConfig.source || {}), entry: initialEntries.sourceEntries }
+	finalConfig.output = {
+		...(finalConfig.output || {}),
+		distPath: {
+			...((typeof finalConfig.output?.distPath === 'object' && finalConfig.output.distPath) || {}),
+			root: state.DIST_DIR
+		},
+		filenameHash: false,
+		cleanDistPath: false,
+		assetPrefix: state.BUILD_BASE || '/',
+		dataUriLimit: 0
+	}
+	finalConfig.dev = {
+		...(finalConfig.dev || {}),
+		lazyCompilation: false
+	}
+	finalConfig.server = {
+		...(finalConfig.server || {}),
+		base: state.BUILD_BASE || '/',
+		publicDir,
+		htmlFallback: false
+	}
+	finalConfig.tools = { ...(finalConfig.tools || {}), htmlPlugin: false }
+	const devBase = state.BUILD_BASE || '/'
+	const devBasePrefix = devBase === '/' ? '' : devBase.slice(0, -1)
+	if (state.STATIC_DIR !== false && state.MERGED_ASSETS_DIR) {
+		await preparePublicAssets({
+			themeDir: state.THEME_ASSETS_DIR,
+			userDir: state.USER_ASSETS_DIR,
+			targetDir: state.MERGED_ASSETS_DIR
+		})
+	}
+	if (cli.CLI_PORT != null) {
+		finalConfig.server = { ...(finalConfig.server || {}), port: cli.CLI_PORT }
+	}
+	if (cli.CLI_HOST !== null) {
+		finalConfig.server = { ...(finalConfig.server || {}), host: cli.CLI_HOST }
+	}
+	const rsbuild = await createRsbuild({
+		cwd: state.PAGES_DIR,
+		callerName: 'methanol',
+		config: finalConfig
+	})
+	const server = await rsbuild.createDevServer()
+
+	if (state.MERGED_ASSETS_DIR && state.USER_ASSETS_DIR) {
+		const assetWatcher = chokidar.watch(state.USER_ASSETS_DIR, {
+			ignoreInitial: true
+		})
+		const handleAssetUpdate = (type, path) => {
+			const relPath = relative(state.USER_ASSETS_DIR, path)
+			enqueue(async () => {
+				await updateAsset({
+					type,
+					path,
+					relPath,
+					themeDir: state.THEME_ASSETS_DIR,
+					userDir: state.USER_ASSETS_DIR,
+					targetDir: state.MERGED_ASSETS_DIR
+				})
+				reload()
+			})
+		}
+		assetWatcher.on('add', (path) => handleAssetUpdate('add', path))
+		assetWatcher.on('change', (path) => handleAssetUpdate('change', path))
+		assetWatcher.on('unlink', (path) => handleAssetUpdate('unlink', path))
+		assetWatcher.on('addDir', (path) => handleAssetUpdate('addDir', path))
+		assetWatcher.on('unlinkDir', (path) => handleAssetUpdate('unlinkDir', path))
+	}
 
 	const invalidateHtmlCache = () => {
 		htmlCacheEpoch += 1
@@ -172,36 +325,52 @@ export const runViteDev = async () => {
 		if (error?.message) return error.message
 		return String(error)
 	}
-	const sendDevError = async (res, error, url = '/') => {
+	const sendDevError = async (res, error) => {
 		const message = formatDevError(error)
 		const basePrefix = devBasePrefix || ''
-		const rawHtml = HTMLRenderer.serialize(
+		const html = HTMLRenderer.serialize(
 			DevErrorPage({ message, basePrefix })(HTMLRenderer)
 		)
-		let html = rawHtml
-		try {
-			html = await server.transformIndexHtml(url, rawHtml)
-		} catch (err) {
-			console.error(err)
-		}
 		res.statusCode = 500
 		res.setHeader('Content-Type', 'text/html')
 		res.end(html)
 	}
 
-	const _invalidate = (id) => {
-		const _module = server.moduleGraph.getModuleById(id)
-		if (_module) {
-			server.moduleGraph.invalidateModule(_module)
-		}
-	}
 	const invalidateReframeInject = () => {
-		_invalidate('\0methanol:registry')
-		_invalidate('\0methanol:inject')
-		_invalidate(resolve(virtualModuleDir, 'inject.js'))
+		virtualModules.updateRegistry()
 	}
 	const invalidatePagesIndex = () => {
-		_invalidate('\0methanol:pages')
+		virtualModules.updatePages()
+		virtualModules.updateRegistry()
+	}
+
+	const transformDevHtml = async (html, routePath) => {
+		const scanned = await scanRenderedHtml(html, routePath, { rewriteInline: false })
+		const stats = await server.environments.web.getStats()
+		const statsHash = stats?.hash || stats?.stats?.map((item) => item.hash).filter(Boolean).join(':') || null
+		if (!statsHash || devManifestCache?.hash !== statsHash) {
+			const manifest = createAssetManifest({
+				entryRecords: currentEntries.records,
+				stats
+			})
+			devManifestCache = {
+				hash: statsHash,
+				manifest,
+				...createDevManifestMaps(manifest, currentEntries.records)
+			}
+		}
+		const { manifest, scriptMap, styleMap } = devManifestCache
+		return rewriteHtmlContent(
+			scanned.html,
+			scanned.plan,
+			routePath,
+			resolveBasePrefix(),
+			manifest,
+			scriptMap,
+			styleMap,
+			new Set(),
+			null
+		)
 	}
 
 	const refreshPagesContext = async () => {
@@ -225,7 +394,7 @@ export const runViteDev = async () => {
 		if (!pagesContext || token !== pagesContextToken) return
 		const pages = pagesContext.pagesAll || pagesContext.pages || []
 		if (!pages.length) return
-		const { workers, assignments } = createBuildWorkers(pages.length, { command: 'serve' })
+		const { workers, assignments } = createBuildWorkers(pages.length, { command: 'dev' })
 		const excludedRoutes = Array.from(pagesContext.excludedRoutes || [])
 		const excludedDirs = Array.from(pagesContext.excludedDirs || [])
 		try {
@@ -328,15 +497,9 @@ export const runViteDev = async () => {
 	const runInitialCompile = async () => {
 		const token = pagesContextToken
 		try {
-			const nextContext = await buildPagesContext({ compileAll: false })
-			if (token !== pagesContextToken) {
-				return
-			}
-			setPagesContext(nextContext)
-			const nextToken = pagesContextToken
 			invalidateHtmlCache()
-			await prebuildHtmlCache(nextToken)
-			if (nextToken !== pagesContextToken) {
+			await prebuildHtmlCache(token)
+			if (token !== pagesContextToken) {
 				return
 			}
 			reload()
@@ -427,7 +590,7 @@ export const runViteDev = async () => {
 			}
 		}
 
-		if (pathname.startsWith('/@vite') || pathname.startsWith('/__vite')) {
+		if (pathname.startsWith('/rsbuild-hmr') || pathname.startsWith('/__rsbuild')) {
 			return next()
 		}
 
@@ -489,17 +652,14 @@ export const runViteDev = async () => {
 				}
 				try {
 					const html = await readFile(candidate, 'utf-8')
-					const candidateUrl = devBasePrefix
-						? `${devBasePrefix}/${relativePath}`
-						: `/${relativePath}`
-					const transformed = await server.transformIndexHtml(candidateUrl, html)
+					const transformed = await transformDevHtml(html, requestedPath)
 					res.statusCode = 200
 					res.setHeader('Content-Type', 'text/html')
 					res.end(transformed)
 					return
 				} catch (err) {
 					console.error(err)
-					await sendDevError(res, err, req.url)
+					await sendDevError(res, err)
 					return
 				}
 			}
@@ -536,7 +696,7 @@ export const runViteDev = async () => {
 			) {
 				res.statusCode = status
 				res.setHeader('Content-Type', 'text/html')
-				res.end(cacheEntry.html)
+				res.end(await transformDevHtml(cacheEntry.html, renderRoutePath))
 				return
 			}
 
@@ -558,7 +718,7 @@ export const runViteDev = async () => {
 				)
 			} catch (err) {
 				logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
-				await sendDevError(res, err, req.url)
+				await sendDevError(res, err)
 				return
 			}
 			if (renderEpoch === htmlCacheEpoch) {
@@ -571,21 +731,16 @@ export const runViteDev = async () => {
 			}
 			res.statusCode = status
 			res.setHeader('Content-Type', 'text/html')
-			res.end(html)
+			res.end(await transformDevHtml(html, renderRoutePath))
 		} catch (err) {
 			logMdxError('MDX render', err, pageMeta || { path, routePath: renderRoutePath })
-			await sendDevError(res, err, req.url)
+			await sendDevError(res, err)
 		}
 	}
 
-	if (Array.isArray(server.middlewares.stack)) {
-		server.middlewares.stack.unshift({ route: '', handle: htmlMiddleware })
-	} else {
-		server.middlewares.use(htmlMiddleware)
-	}
+	handleHtmlRequest = htmlMiddleware
 
 	await server.listen()
-	server.printUrls()
 
 	let queue = Promise.resolve()
 	const enqueue = (task) => {
@@ -603,13 +758,30 @@ export const runViteDev = async () => {
 	}
 
 	const reload = () => {
-		server.ws.send({ type: 'full-reload' })
+		server.sockWrite('static-changed')
 	}
 
 	runInitialCompile()
 
-	const refreshPages = async () => {
+	const refreshPages = async ({ compilePath = null } = {}) => {
 		await refreshPagesContext()
+		if (compilePath) {
+			const page = pagesContext.pagesAll?.find?.((entry) => entry.path === compilePath)
+				|| pagesContext.pages?.find?.((entry) => entry.path === compilePath)
+				|| null
+			if (page?.content?.trim()) {
+				try {
+					await compilePageMdx(page, pagesContext, {
+						lazyPagesTree: true,
+						refreshPagesTree: false
+					})
+					page.mdxComponent = null
+				} catch (err) {
+					logMdxError('MDX compile', err, page)
+					page.mdxComponent = null
+				}
+			}
+		}
 		invalidatePagesIndex()
 		invalidateHtmlCache()
 		reload()
@@ -774,7 +946,7 @@ export const runViteDev = async () => {
 		if (!resolved?.routePath) {
 			return
 		}
-		await refreshPages()
+		await refreshPages({ compilePath: kind === 'add' ? path : null })
 	}
 
 	pageWatcher.on('change', (path) => {

@@ -18,11 +18,12 @@
  * under the License.
  */
 
-import { writeFile, mkdir, rm } from 'fs/promises'
+import { writeFile, readFile, mkdir, rm } from 'fs/promises'
 import { resolve, dirname, relative, posix } from 'path'
-import { normalizePath } from 'vite'
+import { normalizePath } from '../path-utils.js'
 import { state } from '../state.js'
 import { hashMd5 } from './utils.js'
+import { scanRenderedHtml, rewriteHtmlContent } from './worker-html.js'
 
 const ensureDir = async (dir) => {
 	await mkdir(dir, { recursive: true })
@@ -48,8 +49,9 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 	let commonScriptEntry = null
 	const commonScripts = new Set()
 	let pagesWithScripts = 0
+	const staticPlans = new Map()
 
-	const createEntryModule = async (kind, publicPath, contentOverride = null, extraImports = null) => {
+	const createEntryModule = async (kind, publicPath, contentOverride = null) => {
 		const hash = hashMd5(`${kind}:${publicPath || contentOverride || ''}`)
 		const filename = `${kind}-${hash}.js`
 		const fsPath = resolve(entriesDir, filename)
@@ -59,12 +61,6 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 			lines.push(contentOverride)
 		} else if (publicPath) {
 			lines.push(`import ${JSON.stringify(publicPath)}`)
-		}
-		if (Array.isArray(extraImports) && extraImports.length) {
-			for (const entry of extraImports) {
-				if (!entry) continue
-				lines.push(`import ${JSON.stringify(entry)}`)
-			}
 		}
 		const content = lines.join('\n')
 		await writeFile(fsPath, content)
@@ -94,7 +90,7 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 	const reportProgress = typeof options?.onProgress === 'function'
 		? options.onProgress
 		: null
-	const totalEntries = entries.filter((entry) => entry.source !== 'static').length
+	const totalEntries = entries.length
 	let processedEntries = 0
 
 	const sortedEntries = [...entries].sort((a, b) => {
@@ -103,11 +99,17 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 		return left.localeCompare(right)
 	})
 	for (const entry of sortedEntries) {
-		if (entry.source === 'static') {
-			continue
+		let scanned = preScan?.get(entry.stagePath) || null
+		if (entry.source === 'static' && entry.stagePath) {
+			const source = await readFile(entry.stagePath, 'utf-8')
+			const result = await scanRenderedHtml(source, entry.routePath)
+			scanned = result.scan
+			staticPlans.set(entry.stagePath, result.plan)
+			if (result.changed) {
+				await writeFile(entry.stagePath, result.html)
+			}
 		}
-		if (preScan && preScan.has(entry.stagePath)) {
-			const scanned = preScan.get(entry.stagePath)
+		if (scanned) {
 			const scripts = Array.isArray(scanned?.scripts) ? scanned.scripts : []
 			const styles = Array.isArray(scanned?.styles) ? scanned.styles : []
 			const assets = Array.isArray(scanned?.assets) ? scanned.assets : []
@@ -134,31 +136,20 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 		}
 	}
 
-	if (pagesWithScripts === 0) {
-		return { entryModules: [], assetsEntryPath: null, commonScriptEntry: null, commonScripts: [] }
-	}
-
 	const commonScriptCandidates = Array.from(scriptCounts.entries())
 		.filter(([, count]) => count === pagesWithScripts)
 		.map(([script]) => script)
 		.sort((a, b) => (scriptOrder.get(a) || 0) - (scriptOrder.get(b) || 0))
 
-	const assetsEntryPublicUrl = assetUrls.size ? `/${METHANOL_DIR}/assets-entry.js` : null
-	const extraImports = []
-
 	for (const style of stylePaths) {
-		const styleEntry = await createEntryModule('style', style)
-		extraImports.push(styleEntry.publicUrl)
-	}
-	if (assetsEntryPublicUrl) {
-		extraImports.push(assetsEntryPublicUrl)
+		await createEntryModule('style', style)
 	}
 
 	if (commonScriptCandidates.length) {
 		const commonImports = commonScriptCandidates
 			.map((script) => `import ${JSON.stringify(script)}`)
 			.join('\n')
-		commonScriptEntry = await createEntryModule('script-common', null, commonImports, extraImports)
+		commonScriptEntry = await createEntryModule('script-common', null, commonImports)
 		for (const script of commonScriptCandidates) {
 			commonScripts.add(script)
 		}
@@ -166,11 +157,6 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 
 	for (const [script] of scriptCounts) {
 		if (commonScripts.has(script)) continue
-		if (!commonScriptEntry && extraImports.length) {
-			await createEntryModule('script', script, null, extraImports)
-			extraImports.length = 0
-			continue
-		}
 		await createEntryModule('script', script)
 	}
 
@@ -189,7 +175,8 @@ export async function scanHtmlEntries(entries, preScan = null, options = null) {
 		entryModules,
 		commonScripts: Array.from(commonScripts),
 		commonScriptEntry,
-		assetsEntryPath: assetLines.length ? assetsEntryPath : null
+		assetsEntryPath: assetLines.length ? assetsEntryPath : null,
+		staticPlans
 	}
 }
 
@@ -207,12 +194,53 @@ export async function rewriteHtmlEntries(entries, manifest, scanResult = null, o
 	const reportProgress = typeof options?.onProgress === 'function'
 		? options.onProgress
 		: null
-	const totalEntries = entries.filter((entry) => entry.source !== 'static').length
+	const staticEntries = entries.filter((entry) => entry.source === 'static')
+	const totalEntries = staticEntries.length
 	let processedEntries = 0
-	for (const entry of entries) {
-		if (entry.source === 'static') {
-			continue
+	const entryModules = Array.isArray(scanResult?.entryModules) ? scanResult.entryModules : []
+	const scriptMap = new Map()
+	const styleMap = new Map()
+	for (const module of entryModules) {
+		if (!module?.publicPath || !module?.manifestKey) continue
+		const manifestEntry = resolveManifestEntry(manifest, module.manifestKey)
+		if (!manifestEntry?.file) continue
+		if (module.kind === 'script') {
+			scriptMap.set(module.publicPath, {
+				file: manifestEntry.file,
+				js: manifestEntry.js || null,
+				css: manifestEntry.css || null
+			})
 		}
+		if (module.kind === 'style') {
+			const cssFile = manifestEntry.css?.[0] || (manifestEntry.file.endsWith('.css') ? manifestEntry.file : null)
+			if (cssFile) {
+				styleMap.set(module.publicPath, { file: cssFile, css: manifestEntry.css || null })
+			}
+		}
+	}
+	const commonScripts = new Set(scanResult?.commonScripts || [])
+	const commonKey = scanResult?.commonScriptEntry?.manifestKey
+	const commonEntry = commonKey ? resolveManifestEntry(manifest, commonKey) : null
+	const basePrefix = (await import('../config.js')).resolveBasePrefix()
+	for (const entry of staticEntries) {
+		const stagePath = entry.stagePath || entry.inputPath
+		if (!stagePath) continue
+		const html = await readFile(stagePath, 'utf-8')
+		const plan = scanResult?.staticPlans?.get(stagePath) || null
+		const output = rewriteHtmlContent(
+			html,
+			plan,
+			entry.routePath,
+			basePrefix,
+			manifest,
+			scriptMap,
+			styleMap,
+			commonScripts,
+			commonEntry
+		)
+		const distPath = resolve(state.DIST_DIR, `${entry.name}.html`)
+		await ensureDir(dirname(distPath))
+		await writeFile(distPath, output)
 		processedEntries += 1
 		if (reportProgress) {
 			reportProgress(processedEntries, totalEntries)
